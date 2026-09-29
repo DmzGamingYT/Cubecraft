@@ -1,0 +1,3 @@
+Ce dossier n'appartient pas au jeu : il ne contient que les captures du
+README, que GitHub affiche. Sans ce fichier, Godot les importe comme des
+textures et cree un `.import` a cote de chaque PNG.

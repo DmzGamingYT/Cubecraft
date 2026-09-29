@@ -34,6 +34,33 @@ static func exists(slot: int) -> bool:
 	return FileAccess.file_exists(slot_path(slot))
 
 
+## Premier emplacement libre, ou le dernier si tout est plein. « Jouer » ecrivant
+## dans le premier libre, deux parties rapides successives ne s'ecrasent pas.
+## Le dernier n'est pas le premier : ecraser une partie choisie plutot qu'une
+## autre vaut mieux que d'ecraser silencieusement l'emplacement 1.
+static func first_free_slot() -> int:
+	for slot in range(1, SLOT_COUNT + 1):
+		if not exists(slot):
+			return slot
+	return SLOT_COUNT
+
+
+## Emplacement enregistre le plus recemment, ou 0 s'il n'y en a aucun. C'est ce
+## que reprennent `--load` et le signal historique `load_requested` : sans
+## emplacements, « charger » ne pouvait vouloir dire que le fichier unique.
+static func most_recent_slot() -> int:
+	var best := 0
+	var best_time := -1
+	for entry in list_slots():
+		if not bool(entry.get("exists", false)):
+			continue
+		var when := int(entry.get("saved_at", 0))
+		if when > best_time:
+			best_time = when
+			best = int(entry.get("slot", 0))
+	return best
+
+
 ## Y a-t-il une sauvegarde dans un emplacement quelconque ?
 static func exists_any() -> bool:
 	for slot in range(1, SLOT_COUNT + 1):
@@ -100,38 +127,54 @@ static func list_slots() -> Array[Dictionary]:
 
 
 ## Nom affiche d'un emplacement : celui choisi par le joueur, sinon un libelle
-## construit a partir de la date, comme un dossier range automatiquement.
+## construit a partir du JOUR de sauvegarde, comme un dossier range
+## automatiquement.
+##
+## La date est coupee entre le libelle et la ligne de detail — le jour d'un cote,
+## l'heure de l'autre. La premiere version répétait la date entiere sur les deux
+## lignes : le texte debordait sur trois lignes et la ligne du monde prenait deux
+## fois plus de place que les autres, dont il sortait de la carte.
 static func slot_label(entry: Dictionary) -> String:
 	var name := str(entry.get("name", ""))
 	if not name.is_empty():
 		return name
 	if not bool(entry.get("exists", false)):
-		return "Emplacement %d — vide" % int(entry.get("slot", 1))
-	return "Monde du %s" % _format_date(int(entry.get("saved_at", 0)))
+		return "Emplacement %d" % int(entry.get("slot", 1))
+	return "Monde du %s" % _format_day(int(entry.get("saved_at", 0)))
 
 
-## Ligne de resume sous le nom : graine, puis date de sauvegarde. Les deux
-## informations qui servent a reconnaitre un monde sans le charger.
+## Ligne de resume sous le nom : la graine — qui est la seule chose qui identifie
+## un monde sans le charger — puis l'heure de la derniere sauvegarde.
 static func slot_detail(entry: Dictionary) -> String:
 	if not bool(entry.get("exists", false)):
-		return "Aucun monde enregistre"
+		return "Vide — cliquer pour creer un monde"
 	var parts: Array[String] = ["Graine %d" % int(entry.get("seed", 0))]
-	var date := _format_date(int(entry.get("saved_at", 0)))
-	if not date.is_empty():
-		parts.append(date)
+	var hour := _format_hour(int(entry.get("saved_at", 0)))
+	if not hour.is_empty():
+		parts.append(hour)
 	return "   •   ".join(parts)
 
 
-## Date lisible, en francais. Renvoie une chaine vide sur une date absente ou
-## aberrante plutot qu'un nombre brut : elle serait affichee telle quelle.
-static func _format_date(unix_time: int) -> String:
-	if unix_time <= 0:
-		return ""
-	var stamp := Time.get_datetime_dict_from_unix_time(unix_time)
+## Jour de sauvegarde, en francais. Chaine vide sur une date absente ou aberrante
+## plutot qu'un nombre brut : elle serait affichee telle quelle.
+static func _format_day(unix_time: int) -> String:
+	var stamp := _stamp(unix_time)
 	if stamp.is_empty():
 		return ""
-	return "%02d/%02d/%04d a %02dh%02d" % [stamp.day, stamp.month, stamp.year,
-		stamp.hour, stamp.minute]
+	return "%02d/%02d/%04d" % [stamp.day, stamp.month, stamp.year]
+
+
+static func _format_hour(unix_time: int) -> String:
+	var stamp := _stamp(unix_time)
+	if stamp.is_empty():
+		return ""
+	return "%02dh%02d" % [stamp.hour, stamp.minute]
+
+
+static func _stamp(unix_time: int) -> Dictionary:
+	if unix_time <= 0:
+		return {}
+	return Time.get_datetime_dict_from_unix_time(unix_time)
 
 
 # -------------------------------------------------------------------- index

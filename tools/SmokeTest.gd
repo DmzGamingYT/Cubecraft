@@ -32,6 +32,8 @@ func _initialize() -> void:
 	_test_effects()
 	_test_foliage()
 	_test_title_seed()
+	_test_settings()
+	_test_save_slots()
 
 	# La partie integration a besoin d'une SceneTree qui tourne : elle prend le
 	# relais dans _process, image par image.
@@ -1218,3 +1220,89 @@ func _test_title_seed() -> void:
 		"textes differents acceptes")
 	var random := TitleScreen.parse_seed("")
 	check(typeof(random) == TYPE_INT, "vide = graine aleatoire entiere")
+
+
+## Reglages persistants.
+##
+## Aucun appel n'ecrit le fichier : le test tourne dans le meme `user://` que le
+## jeu, et un `reset()` ou un `write()` effacerait les reglages du joueur. On
+## passe donc par `set_value(..., false)`, dont le troisieme argument est
+## justement « n'enregistre pas » — et dont l'existence se verifie ici.
+func _test_settings() -> void:
+	section("reglages")
+	Settings.ensure_loaded()
+	check(Settings.has("music"), "reglage connu present")
+	check(not Settings.has("inexistant"), "reglage inconnu refuse")
+	check(Settings.value("music", -1.0) >= 0.0, "volume lisible")
+
+	# Le bornage est la seule garantie que le jeu demarre apres un fichier
+	# corrompu : chaque type de reglage a sa propre regle.
+	check(Settings.bounded("render_distance", 999) == int(Settings.LIMITS["render_distance"][1]),
+		"portee bornee a son maximum")
+	check(Settings.bounded("render_distance", -50) == int(Settings.LIMITS["render_distance"][0]),
+		"portee bornee a son minimum")
+	check(Settings.bounded("fov", 1e9) == float(Settings.LIMITS["fov"][1]), "champ borne")
+	check(Settings.bounded("fov", "beaucoup") == float(Settings.DEFAULTS["fov"]),
+		"texte illisible = defaut")
+	check(Settings.bounded("invert_y", 7) == true, "booleen : 7 vaut vrai")
+	check(Settings.bounded("render_distance", 3.7) is int, "reglage entier reste entier")
+
+	# Un cran suit le pas du reglage, et un cran de trop s'arrete sur la limite.
+	# `save = false` partout : le test partage le `user://` du joueur.
+	var before := int(Settings.value("render_distance"))
+	var after := int(Settings.step("render_distance", 1, false))
+	check(after == before + 1, "un cran en avant (%d -> %d)" % [before, after])
+	Settings.set_value("render_distance", int(Settings.LIMITS["render_distance"][1]), false)
+	check(int(Settings.step("render_distance", 1, false)) == int(Settings.LIMITS["render_distance"][1]),
+		"un cran de plus ne deborde pas")
+	Settings.set_value("render_distance", before, false)
+
+	# Zero doit couper le son, pas envoyer -inf a un volume de son.
+	check(Settings.to_db(0.0) > -80.0, "volume nul coupe proprement")
+	check(Settings.to_db(1.0) == 0.0, "volume plein = 0 dB")
+	check(Settings.to_db(0.5) < 0.0, "volume partiel attenue")
+
+
+## Emplacements de sauvegarde.
+##
+## Comme pour les reglages, rien n'est ecrit ni efface : le test lit l'etat du
+## joueur, il n'y touche pas. Ce qui est verifie ici est la mise en forme et la
+## regle de choix, pas le disque.
+func _test_save_slots() -> void:
+	section("emplacements de sauvegarde")
+	check(SaveSystem.SLOT_COUNT >= 3, "plusieurs emplacements proposes")
+	check(SaveSystem.slot_path(1) != SaveSystem.slot_path(2), "chemins distincts")
+	check(SaveSystem.slot_path(1).ends_with("1.json"), "le numero est dans le chemin")
+
+	var free := SaveSystem.first_free_slot()
+	check(free >= 1 and free <= SaveSystem.SLOT_COUNT,
+		"premier emplacement libre dans la plage (%d)" % free)
+
+	var recent := SaveSystem.most_recent_slot()
+	check(recent >= 0 and recent <= SaveSystem.SLOT_COUNT,
+		"emplacement le plus recent dans la plage (%d)" % recent)
+	if not SaveSystem.exists_any():
+		check(recent == 0, "aucune sauvegarde : aucun emplacement le plus recent")
+
+	# Une entree vide doit dire « vide » deux fois, pas laisser un nom vide.
+	var vide := {"slot": 3, "exists": false}
+	check(not SaveSystem.slot_label(vide).is_empty(), "libelle d'un emplacement vide")
+	check(SaveSystem.slot_detail(vide).contains("Vide"),
+		"detail d'un emplacement vide")
+
+	# Le libelle d'un monde sans nom porte le JOUR, le detail l'heure : si les
+	# deux reprenaient la date entiere, la ligne deborderait sur trois lignes.
+	var jour := Time.get_unix_time_from_datetime_dict({
+		"year": 2026, "month": 9, "day": 29, "hour": 21, "minute": 53})
+	var monde := {"slot": 1, "exists": true, "name": "", "seed": 42, "saved_at": jour}
+	check(SaveSystem.slot_label(monde) == "Monde du 29/09/2026",
+		"libelle = jour de sauvegarde")
+	check(SaveSystem.slot_detail(monde) == "Graine 42   •   21h53",
+		"detail = graine et heure")
+	check(not SaveSystem.slot_label(monde).contains("21h53"),
+		"l'heure n'est pas repetee dans le libelle")
+	check(SaveSystem.slot_label({"slot": 1, "exists": true, "name": "Taverne",
+		"saved_at": jour}) == "Taverne", "un nom saisi prime sur la date")
+	# Une date absente ne doit pas produire « Epoch » ni un nombre brut.
+	check(SaveSystem.slot_detail({"slot": 1, "exists": true, "seed": 1,
+		"saved_at": 0}) == "Graine 1", "date absente = detail sans heure")

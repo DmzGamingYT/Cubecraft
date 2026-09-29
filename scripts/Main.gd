@@ -151,8 +151,17 @@ func _ready() -> void:
 		_net.roster_changed.connect(_on_net_roster_changed)
 		_net.join_failed.connect(_on_net_join_failed)
 
+	# La sauvegarde unique des versions precedentes devient l'emplacement 1, avant
+	# toute lecture : le joueur qui met a jour retrouve sa partie sans rien
+	# cocher, et sans que le jeu ait jamais vu deux emplacements concurrent.
+	SaveSystem.migrate_legacy()
+	# Les reglages sont appliques AVANT la construction du monde : la portee est
+	# lue par `World.setup`, et la ligne de commande doit pouvoir l'emporter
+	# dessus — `--distance` est une demande ponctuelle, le reglage un defaut.
+	_apply_settings()
 	Game.world_seed = int(args["seed"])
-	Game.render_distance = int(args["distance"])
+	if int(args["distance"]) != 5:
+		Game.render_distance = int(args["distance"])
 	if Game.world_seed == 0:
 		Game.world_seed = randi()
 	_screenshot_mode = bool(args["screenshot"])
@@ -175,17 +184,27 @@ func _ready() -> void:
 	_build_postfx()
 	if int(args["shader"]) > 0:
 		postfx.set_index(int(args["shader"]))
+	else:
+		postfx.set_index(int(Settings.value("shader", 0)))
 	_build_loading()
 	_build_title()
 	_build_debug_menu()
 	# Demarrage auto seulement sur demande explicite : sinon c'est l'ecran
 	# titre qui choisit la graine, et le monde attend ce choix.
 	var auto := _screenshot_mode or _fpshot or _loading_shot or _ui_test \
-		or _pause_shot or _debug_shot or _debug_run or bool(args["load"]) \
-		or int(args["seed"]) != 0 or int(args["distance"]) != 5
+			or _pause_shot or _debug_shot or _debug_run or bool(args["load"]) \
+			or int(args["seed"]) != 0 or int(args["distance"]) != 5
 	if auto:
+		# `--load` reprend le monde le plus recent, pas l'emplacement 1 : une
+		# partie nouee est longue, et n'a pas vocation a disparaitre derriere
+		# une partie lancee depuis un autre poste.
+		if bool(args["load"]):
+			var slot := SaveSystem.most_recent_slot()
+			if slot > 0:
+				Game.save_slot = slot
+				Game.world_name = _slot_name(slot)
 		_start_new_game(Game.world_seed, Game.render_distance,
-			bool(args["load"]) and Game.has_save())
+			bool(args["load"]) and Game.has_slot(Game.save_slot))
 	else:
 		title.show_menu(Game.has_save(), Game.render_distance)
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
@@ -330,6 +349,20 @@ func _on_net_join_failed(reason: String) -> void:
 		title.show_message(reason)
 
 
+## Applique les reglages persistants.
+##
+## Les reglages qui dependent d'un objet de jeu — le champ de vision et la
+## sensibilite du joueur — sont poses dans `_build_world`, la ou le joueur
+## existe. Ici on ne traite que ce qui regit le volume et la portee.
+static func _apply_settings() -> void:
+	Game.render_distance = clampi(int(Settings.value("render_distance", 5)), 2, 14)
+	var sounds := _autoload("Sounds")
+	if sounds == null:
+		return
+	sounds.set_music_scale(float(Settings.value("music", 0.65)))
+	sounds.set_sfx_scale(float(Settings.value("sfx", 0.90)))
+
+
 static func _autoload(name: String) -> Node:
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree == null or tree.root == null:
@@ -420,6 +453,12 @@ func _build_world() -> void:
 	player = Player.new()
 	player.name = "Player"
 	player.world = world
+	# Reglages de visee, poses avant l'ajout a l'arbre : le joueur construit sa
+	# camera dans son `_ready`, et un champ de vision lu apres serait ecrase
+	# par la valeur par defaut.
+	player.base_fov = float(Settings.value("fov", Player.FOV_BASE))
+	player.mouse_sensitive = float(Settings.value("sensitivity", 0.0022))
+	player.invert_y = bool(Settings.value("invert_y", false))
 	add_child(player)
 	# L'inventaire de depart est donne avant l'enregistrement : l'interface peut
 	# ainsi le lire des son `_ready`.
@@ -737,6 +776,9 @@ func _build_title() -> void:
 	title.host_requested.connect(_on_title_host)
 	title.join_requested.connect(_on_title_join)
 	title.skin_changed.connect(_on_title_skin)
+	title.slot_load_requested.connect(_on_title_slot_load)
+	title.slot_create_requested.connect(_on_title_slot_create)
+	title.slot_delete_requested.connect(_on_title_slot_delete)
 	layer.add_child(title)
 	title.hide_menu()
 
@@ -755,7 +797,7 @@ func _on_title_skin(skin: int) -> void:
 ## avec une autre graine que celle des chunks edites).
 func _start_new_game(seed_value: int, distance: int, from_save := false,
 		is_network := false) -> void:
-	if from_save and Game.has_save():
+	if from_save and Game.has_slot(Game.save_slot):
 		seed_value = _save_seed()
 	if seed_value == 0:
 		seed_value = randi()
@@ -791,8 +833,8 @@ func _start_new_game(seed_value: int, distance: int, from_save := false,
 	player.can_move = false
 
 	_show_loading(true)
-	if from_save and Game.has_save():
-		Game.load_game()
+	if from_save and Game.has_slot(Game.save_slot):
+		Game.load_slot(Game.save_slot)
 
 	if _screenshot_mode:
 		# Juste au-dessus du sol et plongeant : c'est le cadrage qui montre le
@@ -819,11 +861,16 @@ func _start_new_game(seed_value: int, distance: int, from_save := false,
 
 
 func _save_seed() -> int:
-	var data := SaveSystem.read()
+	var data := SaveSystem.read(Game.save_slot)
 	return int(data.get("seed", 0))
 
 
+## Une partie rapide « Jouer » part dans le premier emplacement libre, et non
+## dans celui de la partie precedente : sans cela, relancer « Jouer » apres avoir
+## repris un monde ecraserait ce monde, sans que rien ne l'ait annonce.
 func _on_title_play(seed_value: int, distance: int) -> void:
+	Game.save_slot = SaveSystem.first_free_slot()
+	Game.world_name = ""
 	await _leave_title()
 	_start_new_game(seed_value, distance, false)
 
@@ -955,9 +1002,64 @@ func _on_title_join(address: String, port: int) -> void:
 	# la partie. `lobby_entered` fera le reste.
 
 
+## Reprise du monde enregistre le plus recemment. Ce signal ne part plus d'aucun
+## bouton — « Mes mondes… » passe par `_on_title_slot_load` et laisse choisir —
+## mais il reste le chemin de la ligne de commande `--load`, qui n'a pas de liste
+## sous les yeux.
 func _on_title_load() -> void:
+	var slot := SaveSystem.most_recent_slot()
+	if slot <= 0:
+		return
+	Game.save_slot = slot
+	Game.world_name = _slot_name(slot)
 	await _leave_title()
 	_start_new_game(0, Game.render_distance, true)
+
+
+## Reprise d'un emplacement choisi dans « Mes mondes ». Le slot est pose AVANT le
+## fondu : `start_new_game` le lit pour relire la graine, et il doit donc etre
+## juste au moment ou le monde se construit, pas apres.
+func _on_title_slot_load(slot: int) -> void:
+	Game.save_slot = slot
+	Game.world_name = _slot_name(slot)
+	await _leave_title()
+	_start_new_game(0, Game.render_distance, true)
+
+
+## Creation d'un monde dans un emplacement choisi. Le nom et la graine viennent du
+## panneau « Nouveau monde », que le joueur a rempli avant de valider.
+func _on_title_slot_create(slot: int, world_name: String, seed_value: int,
+		distance: int) -> void:
+	Game.save_slot = slot
+	Game.world_name = world_name
+	await _leave_title()
+	_start_new_game(seed_value, distance, false)
+	# La sauvegarde part tout de suite : sans elle, quitter la partie par la
+	# pause Leaving une place vide dans la liste, et le monde tout juste cree
+	# disparaitrait de « Mes mondes ».
+	Game.save_game()
+
+
+## Effacement d'un emplacement demande par le panneau. Si c'est celui de la
+## partie en cours, l'ecran titre se recharge : sinon sa ligne garderait
+## l'affichage d'un monde qui n'existe plus.
+func _on_title_slot_delete(slot: int) -> void:
+	SaveSystem.erase(slot)
+	if slot == Game.save_slot:
+		Game.world_name = ""
+		Game.save_slot = SaveSystem.first_free_slot()
+	if title != null and title.visible:
+		title.refresh_panels()
+
+
+## Nom enregistre d'un emplacement, ou une chaine vide. Lu par l'index plutot
+## que par le fichier : cette fonction n'a pas besoin du monde, seulement de sa
+## etiquette.
+func _slot_name(slot: int) -> String:
+	for entry in SaveSystem.list_slots():
+		if int(entry.get("slot", 0)) == slot:
+			return str(entry.get("name", ""))
+	return ""
 
 
 ## Eteint le menu avant de lancer une partie : sans ce fondu, l'ecran titre
@@ -1170,11 +1272,27 @@ func _process(delta: float) -> void:
 	elif _pause_shot and _ready_to_play:
 		_capturing = true
 		_pause_shot = false
+		# L'ecran de chargement s'eteint sur LOADING_FADE secondes, et ce fondu
+		# est un tween de `Main` : le mettre en pause le fige. Ouvrir la pause
+		# dans la seconde qui suit la fin de la generation photographiait donc
+		# le panneau de chargement PAR-DESSUS le menu — la capture ne montrait
+		# pas du tout ce qu'elle annonce. On attend donc que la couche soit
+		# rangee. La boucle est bornee : un fondu interrompu laisserait la
+		# couche visible et une attente sans fin ne finirait jamais.
+		var guard := 0
+		while _loading_layer != null and _loading_layer.visible and guard < 180:
+			guard += 1
+			await get_tree().process_frame
 		# Le menu doit etre mesure AVANT la capture : on verifie ainsi que le
 		# panneau est reellement centre, et pas seulement a l'ecran.
 		Game.toggle_pause()
 		await get_tree().process_frame
 		await get_tree().process_frame
+		# Puis on attend la fin de son animation d'arrivee : photographier un
+		# panneau a moitie fondu ne dit rien de son dessin, et l'image sortait
+		# plus sourde que le menu. La duree vient du menu lui-meme, elle ne peut
+		# pas deriver de celle qu'il annonce.
+		await get_tree().create_timer(PauseMenu.FADE_IN * 2.0).timeout
 		_check_centring("menu pause", hud.pause_menu)
 		# Puis capture **menus ouverts** : mesurer un panneau est une chose, en
 		# montrer le dessin en est une autre, et c'est ce que la capture doit
@@ -1230,7 +1348,7 @@ func _process(delta: float) -> void:
 	elif _title_test and title != null and title.visible \
 			and _running_limit > 0.0 and _elapsed >= _running_limit:
 		_capturing = true
-		await _capture_ascii()
+		await _capture_title_panels()
 		await Game.quit_game()
 	elif _running_limit > 0.0 and _elapsed >= _running_limit:
 		# `Game.quit_game` laisse passer un cycle audio : on gele la boucle
@@ -1240,6 +1358,32 @@ func _process(delta: float) -> void:
 
 
 # --------------------------------------------------- mode diagnostic
+
+## Photos de tous les panneaux du menu de lancement, un fichier chacun.
+##
+## Une seule photo ne verrait que le panneau principal — le seul qui s'ouvre tout
+## seul. Les reglages et la liste des mondes, eux, n'apparaissent qu'apres un
+## clic : sans ce mode, ils ne seraient jamais regardes, et c'est precisement la
+## ou une carte trop haute ou un texte qui deborde se voient.
+##
+## Le controle de centrage n'est PAS appele ici, contrairement aux autres
+## ecrans : sur le titre, c'est le BLOC — le logo et les deux cartes — qui est
+## centre, la carte des boutons etant volontairement celle de gauche. La mesure
+## la declarerait mal placee a tous les coups, et ce serait un faux signal.
+func _capture_title_panels() -> void:
+	for panel in TITLE_PANELS:
+		title.show_panel(panel)
+		# On attend la FIN du fondu d'ouverture, pas une image : le panneau
+		# apparait en 0,18 s, et deux images ne donnent que 30 ms — la photo
+		# sortait avec des boutons a moitie transparents, ce qui se lisait
+		# comme un bug de mise en page alors que c'etait l'animation.
+		await get_tree().create_timer(0.35).timeout
+		await _capture_ascii("cubecraft_titre_%s.png" % panel)
+
+
+## Les panneaux du titre, dans l'ordre ou on les visite. L'ordre suit le menu :
+## principal, puis les portes qui en partent.
+const TITLE_PANELS := ["main", "new", "worlds", "options", "net"]
 
 ## Le panneau d'un ecran doit etre centre dans la fenetre : c'est le symptome
 ## que donne un `Control` ancre a 0.5 dont les offsets n'ont pas ete reinitialises.

@@ -4,14 +4,19 @@ extends RefCounted
 ## Reglages persistants du joueur : volumes, portee, champ de vision, sensibilite,
 ## post-traitement.
 ##
-## Un seul fichier JSON, lu au premier acces puis garde en memoire : le menu des
+## Tout est statique, sans autoload : le menu des reglages, le joueur et le
+## generateur de sons ont besoin des MEMES valeurs, et le test de fumee instancie
+## des ecrans hors du jeu ou aucun autoload n'existe. Une classe statique est le
+## seul endroit ou ces trois mondeurs se rejoignent sans dependre du_scene tree.
+##
+## Le fichier n'est lu qu'au premier acces puis garde en memoire : le menu des
 ## reglages s'ouvre des dizaines de fois par session, et relire le disque a chaque
 ## lecture serait du travail pour rien.
 ##
 ## Toute valeur est bornee a la lecture ET a l'ecriture. C'est la seule partie du
 ## code qui lit un fichier ecrit par quelqu'un d'autre : un JSON tronque, une
-## version ancienne du jeu, ou une valeur a 900 pour la portee ne doivent pas
-## pouvoir rendre le jeu injouable au demarrage.
+## version ancienne du jeu, ou une portee a 900 ne doivent pas pouvoir rendre le
+## jeu injouable au demarrage.
 
 const PATH := "user://cubecraft_settings.json"
 const FORMAT_VERSION := 1
@@ -28,8 +33,10 @@ const DEFAULTS := {
 	"shader": 0,
 }
 
-## Bornes par reglage : [minimum, maximum]. Le pas d'ajustement est pose par le
-## menu lui-meme, pas ici.
+## Bornes par reglage : [minimum, maximum]. Filet de securite, pas la verite du
+## jeu : `shader` y est borne large, parce que le nombre REEL de modes de rendu
+## appartient a `PostFx` et bouge quand on en ajoute un. C'est le menu qui
+## boucle sur le vrai compte.
 const LIMITS := {
 	"music": [0.0, 1.0],
 	"sfx": [0.0, 1.0],
@@ -39,28 +46,29 @@ const LIMITS := {
 	"shader": [0, 8],
 }
 
-## Reglages affiches sous forme de pourcentage ou de texte, avec leur pas. Le
-## menu boucle sur cette table : ajouter un reglage ici suffit a ce qu'il
-## apparaisse, sans toucher au panneau.
-const SCALARS := ["music", "sfx", "fov", "sensitivity"]
+## Pas d'un cran de reglage. Un volume de 1 a 100 crans est inmanoeuvrable au
+## stick ; un champ de vision a 0,5 degre ne se sent pas. Le pas est donc choisi
+## par reglage, et non deduit des bornes.
+const STEPS := {
+	"music": 0.05,
+	"sfx": 0.05,
+	"render_distance": 1.0,
+	"fov": 1.0,
+	"sensitivity": 0.0002,
+	"shader": 1.0,
+}
 
-var _cache: Dictionary = {}
-var _loaded := false
-
-
-func _init() -> void:
-	ensure_loaded()
+static var _cache: Dictionary = {}
+static var _loaded := false
 
 
 ## Charge le fichier une seule fois. L'appel est idempotent : le menu peut le
 ## redemander sans relire le disque.
-##
-## Cette methode s'appelait `load`, comme la fonction globale de GDScript.
-## Le parseur resolvait tous les appels vers la globale, qui exige un chemin :
+## Cette methode s'appelait `load`, comme la fonction globale de GDScript. Le
+## parseur resolvait tous les appels vers la globale, qui exige un chemin :
 ## `Settings` ne compilait donc plus, et avec lui l'autoload `Sounds` — c'est-a-dire
-## tout le son du jeu. Le nom est desormais explicite, et l'ancien reste
-## disponible pour qui le cherchait.
-func ensure_loaded() -> void:
+## tout le son du jeu. Le nom est desormais explicite.
+static func ensure_loaded() -> void:
 	if _loaded:
 		return
 	_loaded = true
@@ -84,14 +92,13 @@ func ensure_loaded() -> void:
 	# ne doit pas se retrouver dans le cache et ressortir a l'ecriture.
 	for key in DEFAULTS:
 		if data.has(key):
-			_cache[key] = _bounded(key, data[key])
+			_cache[key] = bounded(key, data[key])
 
 
-## Ecrit le fichier. Renvoie false si l'ecriture echoue, sans interrompre la
-## partie : un disque plein ne doit pas empecher de jouer, seulement de ne pas
-## garder le reglage.
-func write() -> bool:
-	var data := {"version": FORMAT_VERSION}
+## Ecrit le fichier. Renvoie false si l'ecriture echoue sans interrompre la
+## partie : un disque plein doit seulement empecher de garder le reglage.
+static func write() -> bool:
+	var data: Dictionary = {"version": FORMAT_VERSION}
 	for key in _cache:
 		data[key] = _cache[key]
 	var file := FileAccess.open(PATH, FileAccess.WRITE)
@@ -105,7 +112,7 @@ func write() -> bool:
 
 ## Un reglage, borne. La cle est inconnue du jeu : on rend la defaut plutot que
 ## de planter, un menu qui evolue ne doit pas casser les enregistrements vieux.
-func value(key: String, fallback: Variant = null) -> Variant:
+static func value(key: String, fallback: Variant = null) -> Variant:
 	ensure_loaded()
 	if not _cache.has(key):
 		return DEFAULTS.get(key, fallback)
@@ -114,56 +121,83 @@ func value(key: String, fallback: Variant = null) -> Variant:
 
 ## Change un reglage et enregistre. La valeur est bornee avant d'etre stockee :
 ## le fichier ne contient donc jamais une valeur hors bornes, meme si le menu a
-## un bug.
-func set_value(key: String, new_value: Variant) -> Variant:
+## un bug. `save` vaut false pour un reglage ajuste en boucle — la sensibilite
+## par exemple — ou l'on ne veut pas ecrire le disque a chaque cran.
+static func set_value(key: String, new_value: Variant, save: bool = true) -> Variant:
 	ensure_loaded()
 	if not DEFAULTS.has(key):
 		return null
-	# `Variant` explicite : `_bounded` rend une valeur de type libre par nature
-	# (un bool, un int ou un flottant selon le reglage), et le `:=` ferait
-	# de l'avertissement « type infere sur un Variant » une erreur — le projet
+	# `Variant` explicite : `bounded` rend une valeur de type libre par nature
+	# (un bool, un int ou un flottant selon le reglage), et le `:=` ferait de
+	# l'avertissement « type infere sur un Variant » une erreur — le projet
 	# traite les avertissements comme des erreurs.
-	var bounded: Variant = _bounded(key, new_value)
-	_cache[key] = bounded
-	write()
-	return bounded
+	var limited: Variant = bounded(key, new_value)
+	_cache[key] = limited
+	if save:
+		write()
+	return limited
+
+
+## Change un reglage d'un cran, vers le haut ou vers le bas. Le pas du reglage
+## est applique ici plutot que dans le menu : « + » doit signifier la meme chose
+## partout, et le menu n'a pas a connaitre l'echelle de la sensibilite.
+##
+## `save` a la meme raison que dans `set_value` : une reglure qu'on ajuste en
+## boucle n'a pas besoin d'une ecriture disque par cran.
+static func step(key: String, direction: int, save: bool = true) -> Variant:
+	var current: Variant = value(key)
+	if not (current is int or current is float):
+		return set_value(key, not bool(current), save)
+	var increment: float = float(STEPS.get(key, 1.0))
+	var next := float(current) + float(direction) * increment
+	# Le type suit celui du defaut : un reglage entier ne doit pas devenir
+	# flottant sous pretexte qu'on l'a ajuste d'un pas. `bounded` borne ensuite
+	# a la plage — un cran de trop s'arrete donc sur la limite, sans debordement.
+	return set_value(key, int(round(next)) if DEFAULTS[key] is int else next, save)
 
 
 ## Ramene tous les reglages a leurs valeurs par defaut et les ecrit.
-func reset() -> void:
+static func reset() -> void:
 	_loaded = true
 	_cache = DEFAULTS.duplicate(true)
 	write()
 
 
-func has(key: String) -> bool:
-	ensure_loaded()
+static func has(key: String) -> bool:
 	return DEFAULTS.has(key)
 
 
-func keys() -> Array:
+static func keys() -> Array:
 	return DEFAULTS.keys()
 
 
 ## Bornage a la lecture comme a l'ecriture. Le type suit celui du defaut : un
 ## reglage entier refuse un flottant, un reglage booleen refuse 7.
-func _bounded(key: String, raw: Variant) -> Variant:
+##
+## Une chaine n'est acceptee que si elle est reellement un nombre. `float("abc")`
+## ne leve pas d'erreur en GDScript, il vaut 0 — sans cette verification, un
+## fichier de reglages abime (`"fov": "beaucoup"`) ne tomberait pas sur la valeur
+## par defaut mais sur le minimum de la plage, et le joueur decouvrirait son
+## champ de vision change au lancement.
+static func bounded(key: String, raw: Variant) -> Variant:
 	var fallback: Variant = DEFAULTS.get(key)
+	if not DEFAULTS.has(key):
+		return raw
 	if fallback is bool:
 		return bool(raw)
+	var numeric := raw is int or raw is float
+	if raw is String:
+		# `is_valid_float` refuse « 1,5 » (virgule) comme « abc », et accepte
+		# les espaces : c'est exactement ce qu'on veut d'un fichier ecrit a la
+		# main ou par un autre outil.
+		numeric = (raw as String).strip_edges().is_valid_float()
+	if not numeric:
+		return fallback
 	if fallback is int:
-		if not (raw is int or raw is float or raw is String):
-			return fallback
-		return _clamp_int(key, int(raw))
+		return clampi(int(raw), int(LIMITS[key][0]), int(LIMITS[key][1]))
 	if fallback is float:
-		if not (raw is int or raw is float or raw is String):
-			return fallback
 		return clampf(float(raw), float(LIMITS[key][0]), float(LIMITS[key][1]))
 	return raw
-
-
-func _clamp_int(key: String, raw: int) -> int:
-	return clampi(raw, int(LIMITS[key][0]), int(LIMITS[key][1]))
 
 
 ## Volume lineaire (0..1) vers decibels, l'unite que les lecteurs audio

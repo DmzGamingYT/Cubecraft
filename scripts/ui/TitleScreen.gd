@@ -5,10 +5,18 @@ extends Control
 ## couches de nuages en parallaxe et bande de terre, puis le logo, la carte de
 ## menu et celle du personnage.
 ##
-## Signaux vers Main : `play_requested` (nouveau monde, graine + portee),
-## `load_requested` (reprendre la sauvegarde), `quit_requested` (fermer le jeu),
-## `host_requested` et `join_requested` (reseau), `skin_changed` (la tenue
-## choisie dans l'apercu, que Main retient pour l'annoncer en multijoueur).
+## Cinq panneaux partagent la meme carte — principal, nouveau monde, mondes,
+## reglages, multijoueur — pour qu'aucun ne fasse sauter la mise en page. Deux
+## d'entre eux vivent dans leur propre fichier (`TitleOptions`, `TitleWorlds`) :
+## ils sont assez longs pour ne plus tenir dans ce fichier, et les sortir evite
+## de le faire grossir a chaque nouveau panneau.
+##
+## Signaux vers Main : `play_requested` (partie immediate, graine + portee),
+## `load_requested` (reprendre le monde le plus recent — plus aucun bouton ne
+## l'emet, `--load` passe par la ; « Mes mondes… » passe par les signaux
+## `slot_*`), `quit_requested` (fermer le jeu), `host_requested` et
+## `join_requested` (reseau), `skin_changed` (la tenue choisie dans l'apercu,
+## que Main retient pour l'annoncer en multijoueur).
 ## Cet ecran ne connait pas l'autoload `Game` : c'est Main qui branche.
 ## Le test de fumee compile ce fichier sans arbre de scene.
 
@@ -19,6 +27,12 @@ signal host_requested(seed_value: int, distance: int)
 signal join_requested(address: String, port: int)
 ## La tenue de l'apercu a change.
 signal skin_changed(index: int)
+## Un emplacement de sauvegarde a ete choisi dans « Mes mondes » : le slot est
+## mis a jour par `Main`, qui appelle `Game` — jamais l'ecran titre, qui n'a
+## pas le monde en main.
+signal slot_load_requested(slot: int)
+signal slot_create_requested(slot: int, world_name: String, seed_value: int, distance: int)
+signal slot_delete_requested(slot: int)
 
 const SPLASHES := [
 	"100% code !",
@@ -80,7 +94,12 @@ const LOGO_STAGGER := 6.0
 ## Hauteur de la rangee de cartes. Les deux cartes la partagent, donc la
 ## composition garde exactement la meme hauteur d'un panneau a l'autre :
 ## changer de panneau ne fait plus sauter le menu.
-const ROW_HEIGHT := 392.0
+##
+## Elle est dimensionnee pour le panneau le plus dense — les reglages, six lignes
+## de pas-a-pas plus deux boutons — et non pour le panneau principal. C'est ce
+## qui evite d'avoir a reduire la taille d'un controle pour qu'un panneau
+## tienne : la hauteur est le plus facile a donner a la decoration.
+const ROW_HEIGHT := 450.0
 ## Hauteur utile dans une carte : la rangee moins ses marges (14 px de chaque
 ## cote, voir `UiKit.card`).
 const CARD_INNER := ROW_HEIGHT - 28.0
@@ -88,7 +107,26 @@ const CARD_INNER := ROW_HEIGHT - 28.0
 ## ici ils portent le nom d'une action, pas un objet.
 const BUTTON_SIZE := Vector2(340, 46)
 ## Hauteur de la bande de terre, en part de la fenetre.
-const GROUND_FRACTION := 0.22
+const GROUND_FRACTION := 0.20
+## Cote d'un bloc du relief, en pixels. La couche proche est deux fois la
+## lointaine : c'est ce rapport qui donne l'ecart de profondeur, pas un flou.
+const RIDGE_CELL_NEAR := 26.0
+const RIDGE_CELL_FAR := 13.0
+## Hauteur du relief en blocs, avant bridage a l'ecran. La brider evite
+## qu'une fenetre tres courte ne pousse les arbres hors de l'image.
+const RIDGE_MAX_NEAR := 5
+const RIDGE_MAX_FAR := 3
+## Longueur d'une periode du relief, en pixels d'ecran.
+##
+## Elle doit-etre un multiple **exact** des deux cotes de bloc ci-dessus,
+## sinon le raccord ne tomberait jamais sur une colonne : la colonne 0 et la
+## derniere resteraient deux echantillons arbitraires d'une meme onde, et la
+## couture se verrait des qu'on elargit la fenetre. 4056 = 26 x 156 = 13 x 312,
+## ce qui convient aux deux couches.
+const RIDGE_SPAN := 4056.0
+## Brume appliquee a la couche la plus eloignee : elle se noie dans le ciel,
+## comme le lointain se noie dans l'air.
+const HAZE_TINT := Color(0.72, 0.83, 0.95)
 ## Hauteur de la bande d'herbe et de la brume d'horizon.
 const GRASS_HEIGHT := 24.0
 const HAZE_HEIGHT := 52.0
@@ -98,10 +136,19 @@ const HINT_HEIGHT := 20.0
 
 # --------------------------------------------------------------------- teintes
 ## Fond des deux cartes : translucide, le ciel doit rester lisible derriere.
-const CARD_BG := Color(0.07, 0.09, 0.12, 0.66)
-const CARD_EDGE := Color(0.95, 0.97, 1.0, 0.18)
-## Carte du personnage, un peu plus claire : le personnage s'y detache.
-const SKIN_BG := Color(0.10, 0.12, 0.16, 0.78)
+##
+## L'opacite a ete remontee de 0,66 a 0,80 apres capture. Elle paraitait suffisante
+## tant que la carte ne portait que cinq boutons : le decor de fond place un arbre
+## pile derriere, et son feuillage vert traversait les libelles. Une carte qui se
+## voit moins est une carte qu'on lit mieux ; la transparence doit se lire comme
+## « le ciel est la », pas comme « les elements se superposent ».
+const CARD_BG := Color(0.07, 0.09, 0.12, 0.80)
+## Arete un peu plus presente : elle detache la carte du ciel sans ajouter de
+## trait, et c'est elle qui donne l'epaisseur au bord.
+const CARD_EDGE := Color(0.95, 0.97, 1.0, 0.22)
+## Carte du personnage, plus claire encore : le personnage s'y detache, et son
+## apercu est fait de couleurs vives qui supportent mal un fond clair.
+const SKIN_BG := Color(0.10, 0.12, 0.16, 0.86)
 const HINT_COLOR := Color(1.0, 1.0, 1.0, 0.62)
 const SKY_TOP := Color(0.25, 0.49, 0.93)
 const SKY_BOTTOM := Color(0.80, 0.89, 0.98)
@@ -120,6 +167,20 @@ var _seed_field: LineEdit
 var _main_box: VBoxContainer
 var _new_box: VBoxContainer
 var _net_box: VBoxContainer
+var _options_box: TitleOptions
+var _worlds_box: TitleWorlds
+## Bandeau « Manette détectée » : il n'apparait que si une manette est reellement
+## branchee, et c'est lui qui invite a naviguer a la croix directionnelle plutot
+## qu'a la souris.
+var _pad_label: Label
+## Emplacement choisi dans « Mes mondes » et pas encore utilise : le panneau
+## « Nouveau monde » s'ouvre dessus, et c'est la que la graine et le nom sont
+## saisis. Zero = aucune destination choisie, la partie ira dans le premier
+## emplacement libre.
+var _pending_slot := 0
+## Nom choisi pour le monde en cours de creation. Vide = le monde sera nomme par
+## sa date de sauvegarde, comme un dossier range automatiquement.
+var _name_field: LineEdit
 var _address_field: LineEdit
 var _port_field: LineEdit
 var _message_label: Label
@@ -153,6 +214,8 @@ var _dirt_edge: TextureRect
 var _ground_shade: TextureRect
 var _vignette: TextureRect
 var _clouds: Array = []
+var _ridge_far: Ridge
+var _ridge_near: Ridge
 var _fade: ColorRect
 var _fading_out := false
 var _last_view := Vector2.ZERO
@@ -237,6 +300,7 @@ func _process(delta: float) -> void:
 	# soleil et les nuages la ou ils etaient, dans un coin de l'ecran.
 	if _viewport_size() != _last_view:
 		_layout()
+	_update_pad_hint()
 	_animate_splash(delta)
 	_animate_logo(delta)
 	_animate_glow(delta)
@@ -371,10 +435,7 @@ func _pick_splash() -> String:
 ## depuis une partie.
 func show_menu(has_save: bool, default_distance: int) -> void:
 	visible = true
-	_main_box.visible = true
-	_new_box.visible = false
-	_net_box.visible = false
-	_load_button.disabled = not has_save
+	_show_only(_main_box)
 	_distance = clampi(default_distance, 2, 14)
 	_update_distance()
 	show_message("")
@@ -450,6 +511,15 @@ func _layout() -> void:
 	_haze.offset_top = -(ground + GRASS_HEIGHT + HAZE_HEIGHT)
 	_haze.offset_bottom = -(ground + GRASS_HEIGHT * 0.6)
 
+	# --- relief : les deux couches se posent sur la ligne d'horizon, celle de
+	# la brume, et remontent d'autant de blocs qu'elles en comptent. La proche
+	# est posee apres la lointaine, donc elle la recouvre : c'est ce
+	# chevauchement qui fait le plan, pas la taille.
+	_layout_ridge(_ridge_far, RIDGE_CELL_FAR, RIDGE_MAX_FAR, false,
+		ground, GRASS_HEIGHT * 0.45)
+	_layout_ridge(_ridge_near, RIDGE_CELL_NEAR, RIDGE_MAX_NEAR, true,
+		ground, 0.0)
+
 	# --- soleil : ancre au coin haut droit, a une marge de la fenetre.
 	var side := clampf(roundf(view.y * 0.10), 54.0, 130.0)
 	var margin_x := roundf(view.x * 0.055)
@@ -485,7 +555,14 @@ func _layout() -> void:
 	_place_logo()
 	var need := maxf(LOGO_HEIGHT + BLOCK_GAP * 2.0 + ROW_HEIGHT + HINT_HEIGHT,
 		_compo.get_combined_minimum_size().y)
-	var top := maxf(10.0, (ground_top - need) * 0.5)
+	var top := (ground_top - need) * 0.5
+	# Le bloc est centre entre le haut de la fenetre et la bande de terre. Quand il
+	# est plus haut qu'elle — sur une fenetre basse, ou avec le panneau des
+	# reglages ouvert — le centrer ainsi le ferait deborder par le bas, sur la
+	# terre et hors de l'ecran. On le centre alors sur toute la fenetre : la
+	# bande de terre reste du decor, pas un plancher.
+	if top < 10.0:
+		top = maxf(10.0, (view.y - need) * 0.5)
 	_compo.anchor_left = 0.5
 	_compo.anchor_right = 0.5
 	_compo.anchor_top = 0.0
@@ -496,6 +573,19 @@ func _layout() -> void:
 	_compo.offset_bottom = top + need
 
 # ---------------------------------------------------------------------- decor
+
+## Ligne de manette, en bas a droite. Le message ne dit pas seulement qu'une
+## manette est branchee : il rappelle *comment* s'en servir, parce que c'est la
+## seule fois ou le joueur peut la voir — au menu, avant d'avoir cliqué quoi que
+## ce soit. Une fois dans le jeu, les diodes de la manette suffisent.
+func _update_pad_hint() -> void:
+	if _pad_label == null:
+		return
+	var connected := Input.get_connected_joypads().size() > 0
+	_pad_label.visible = connected
+	if connected:
+		_pad_label.text = "Manette connectée — croix et stick gauche"
+
 
 ## Le decor est empile dans l'ordre du monde : ciel, nuages, brume, sol, voile
 ## sombre, soleil, vignette. La place de chacun compte — un nuage devant le
@@ -531,6 +621,16 @@ func _build_background() -> void:
 		TextureRect.STRETCH_SCALE)
 	_haze.name = "Brume"
 	add_child(_haze)
+
+	# Le relief, pose AVANT la bande d'herbe : c'est cette derniere qui passe
+	# devant et qui vient fermer le bas des colonnes. Les deux couches sont
+	# empilees dans l'ordre inverse de leur distance — la proche par-dessus.
+	_ridge_far = _build_ridge("ReliefLointain", RIDGE_CELL_FAR, RIDGE_MAX_FAR,
+		false, false)
+	add_child(_ridge_far)
+	_ridge_near = _build_ridge("ReliefProche", RIDGE_CELL_NEAR, RIDGE_MAX_NEAR,
+		true, true)
+	add_child(_ridge_near)
 
 	_grass = _texture_rect(_grass_texture(), TextureRect.STRETCH_TILE)
 	_grass.name = "Herbe"
@@ -606,6 +706,98 @@ func _build_background() -> void:
 	_core.color = SUN_CORE_COLOR
 	_core.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_sun.add_child(_core)
+
+
+## Une couche de relief, avec son profil et ses arbres.
+##
+## `near` distingue les deux plans : le lointain est voile de brume et ne porte
+## aucun arbre. Sans cela les deux reliefs se superposent en un aplat vert et la
+## profondeur disparait — c'est la meme demarche que les nuages lointains, plus
+## pales et plus lents.
+##
+## Le profil vient d'un bruit **a graine fixe** et non d'un tirage au sort :
+## deux redimensionnements de fenetre, ou deux lancements, doivent donner le
+## meme relief. C'est la meme regle que le monde lui-meme, dont la graine
+## decide du terrain.
+func _build_ridge(node_name: String, cell: float, max_blocks: int,
+		near: bool, with_trees: bool) -> Ridge:
+	var node := Ridge.new()
+	node.name = node_name
+	node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	node.cell = cell
+	node.flat = Biomes.grass_tint(Biomes.PLAINS)
+	# Melanger vers le **blanc** etait le reflexe evident, et c'est faux : le
+	# ciel du menu est deja clair, donc « plus pale » voulait dire « plus
+	# blanc », donc presque rien. C'est le melange vers la **brume** — un bleu
+	# tres desature, proche de la couleur du ciel — qui eloigne vraiment la
+	# couche lointaine. Le test de profondeur verifie que les deux teintes se
+	# distinguent, ce qui n'aurait pas ete le cas avec du blanc.
+	node.tint = Color.WHITE if near else HAZE_TINT
+
+	# Les memes tuiles que le terrain en trois dimensions. Hors du jeu, pas
+	# d'atlas : le relief se rabat alors sur des aplats de sa couleur de sol.
+	if Assets.is_ready:
+		node.top = Assets.tile_images.get(Tiles.GRASS_TOP, null)
+		node.side = Assets.tile_images.get(Tiles.GRASS_SIDE, null)
+		node.log = Assets.tile_images.get(Tiles.LOG_SIDE, null)
+		node.leaves = Assets.tile_images.get(Tiles.LEAVES, null)
+	return node
+
+
+## Profil du relief et arbres, recalcules au redimensionnement.
+##
+## Le bruit est **periodique** : sans cela, un relief long n'a pas de fin et
+## la fenetre n'en montre qu'un morceau, different a chaque largeur. On replie
+## donc l'abscisse sur une largeur fixe, ce qui garantit que les deux bords se
+## rejoignent quelle que soit la taille de la fenetre.
+## `width` vaut 0 pour prendre la fenetre. Le parametre n'existe pas pour le
+## jeu, qui n'a jamais besoin d'une autre largeur : il permet au test de
+## construire un profil plus large que l'ecran, pour verifier le raccord.
+func _shape_ridge(node: Ridge, cell: float, max_blocks: int,
+		with_trees: bool, width: float = 0.0) -> void:
+	var span_x := width if width > 0.0 else _viewport_size().x
+	if span_x <= 1.0:
+		return
+	var span := RIDGE_SPAN
+	var columns := int(ceilf(span_x / cell)) + 1
+	var noise := FastNoiseLite.new()
+	noise.seed = 4242
+	noise.frequency = 1.0 / 220.0
+	node.heights = PackedInt32Array()
+	node.heights.resize(columns)
+	for i in columns:
+		var u := fposmod(float(i) * cell, span) / span
+		# Deux octaves : la grande colline, puis le petit relief du dessus.
+		var n := noise.get_noise_2d(u * span, 0.0)
+		n = n * 0.75 + noise.get_noise_2d(u * span * 3.1, 17.0) * 0.25
+		# On ne garde que la moitie haute : une creuse dans l'horizon montrerait
+		# le ciel la ou il y a de la terre, ce qui n'a pas de sens vu de face.
+		node.heights[i] = maxi(1, int(roundf((n * 0.5 + 0.5) * float(max_blocks))))
+	node.columns = columns
+	node.trees = []
+	if not with_trees:
+		node.queue_redraw()
+		return
+	# Les arbres se posent sur un sommet, jamais dans une creuse, et jamais les
+	# uns sur les autres : un arbre plante dans le vide se lirait comme une
+	# erreur. Le bruit, lui, n'est tire qu'une fois pour toutes.
+	var r := RandomNumberGenerator.new()
+	r.seed = 9001
+	var last := -9
+	for i in range(0, columns, 7):
+		if node.heights[i] < 2:
+			continue
+		if i - last < 4:
+			continue
+		if r.randf() > 0.55:
+			continue
+		last = i
+		node.trees.append({
+			"col": i,
+			"trunk": r.randi_range(2, 4),
+			"crown": r.randi_range(1, 2),
+		})
+	node.queue_redraw()
 
 
 ## Une couche du ciel : plein ecran, et elle ne prend jamais la souris — c'est
@@ -762,6 +954,100 @@ func _make_cloud(parent: Control, seed_value: int, frac: float, scale: float,
 		"width": x,
 	})
 
+## Une bande de terrain en voxels, dessinee au carre depuis les tuiles du jeu.
+##
+## Le menu reposait sur un sol parfaitement plat : deux bandes de texture
+## repetees, puis du ciel vide jusqu'au sommet de l'ecran. C'est fidele au
+## jeu, mais mort a l'ecran. Un relief de quelques blocs, lui, donne une
+## ligne d'horizon, et occupe la place ou le joueur va passer ses heures.
+##
+## Aucun maillage 3D ici : une colonne de pixels par case, empilee, avec la
+## face du dessus au sommet et le flanc en dessous. C'est exactement ce qu'on
+## voit d'un bloc de face, et cela tient en une poignee de `draw_texture_rect`.
+## Les tuiles viennent de l'atlas — donc de l'art CC0 desormais — et les
+## arbres sont faits des memes tuiles que ceux du monde.
+##
+## Deux couches a des profondeurs differentes : la lointaine est pale et
+## basse, la proche est nette et porte les arbres. C'est ce decalage qui
+## donne la profondeur, comme pour les nuages.
+class Ridge:
+	extends Control
+
+	## Tuiles. Toutes optionnelles : hors du jeu, l'atlas n'existe pas et le
+	## relief retombe sur des aplats de couleur, ce qui reste correct.
+	var top: Texture2D
+	var side: Texture2D
+	var log: Texture2D
+	var leaves: Texture2D
+	## Couleur de repli, et teinte de la couche lointaine.
+	var flat: Color
+	var tint := Color.WHITE
+
+	var heights := PackedInt32Array()
+	## Arbres : {col, trunk, crown}.
+	var trees: Array = []
+	## Cote d'un bloc, en pixels de l'ecran.
+	var cell := 22.0
+	## Nombre de cases a dessiner : la fenetre peut etre redimensionnee, et le
+	## relief ne doit pas deborder sur le bord droit.
+	var columns := 0
+
+	## Dessine la couche. Les colonnes sont alignees sur le bas du noeud, donc
+	## `floor_y` est la ligne de sol commune a toutes et la seule dont on a
+	## besoin pour y poser les arbres.
+	func _draw() -> void:
+		var peak := 0
+		for h in heights:
+			peak = maxi(peak, h)
+		var floor_y := float(peak) * cell
+		for i in mini(heights.size(), maxi(columns, 0)):
+			var h: int = heights[i]
+			if h <= 0:
+				continue
+			var x := float(i) * cell
+			# Le sommet de la colonne, puis son flanc jusqu'a la ligne de sol.
+			_blit(top, flat, x, floor_y - cell, cell)
+			for k in range(1, h):
+				_blit(side, flat, x, floor_y - cell * float(k + 1), cell)
+		for tree in trees:
+			_draw_tree(tree, floor_y)
+
+
+	## Une tuile, ou un aplat de la meme couleur quand l'atlas manque.
+	func _blit(tex: Texture2D, color: Color, x: float, y: float, size: float) -> void:
+		var rect := Rect2(x, y, size, size)
+		if tex != null:
+			draw_texture_rect(tex, rect, false, tint)
+		else:
+			draw_rect(rect, color * tint)
+
+
+	## Un arbre : un tronc de `trunk` briques, puis une couronne en croix.
+	##
+	## La couronne est en croix et non en carre plein — les quatre coins sont
+	## laisses vides. C'est la silhouette que tout le monde reconnaît ; un
+	## carre plein se lirrait comme un bloc de plus sur l'horizon.
+	func _draw_tree(tree: Dictionary, floor_y: float) -> void:
+		var col: int = int(tree.get("col", -1))
+		if col < 0 or col >= heights.size():
+			return
+		var trunk: int = clampi(int(tree.get("trunk", 3)), 1, 8)
+		var base := floor_y - float(heights[col]) * cell
+		var x := float(col) * cell
+		for k in trunk:
+			_blit(log, flat.darkened(0.2), x, base - cell * float(k + 1), cell)
+		var crown := int(tree.get("crown", 2))
+		for dy in range(crown + 1):
+			for dx in range(-crown, crown + 1):
+				var reach := crown - absi(dx)
+				if dy == 0 and absi(dx) == crown:
+					continue
+				if absi(dy) == crown and reach < 0:
+					continue
+				_blit(leaves, flat.lerp(Color(0.16, 0.42, 0.18), 0.7),
+					x + float(dx) * cell, base - cell * float(trunk + dy), cell)
+
+
 # ------------------------------------------------------------------------ menu
 
 ## Le bloc de menu : le bandeau du logo, la rangee des deux cartes, puis la ligne
@@ -807,6 +1093,21 @@ func _build_menu() -> void:
 	version.offset_bottom = -8.0
 	version.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(version)
+
+	# Symetrique de la version, en bas a droite : la manette est la seule
+	# information de la fenetre qui change pendant qu'on joue, et une ligne fixe
+	# en bas d'ecran se lit mieux qu'un bandeau qui apparaitrait sur le menu.
+	# Elle ne s'affiche que si une manette est reellement branchee.
+	_pad_label = UiKit.label("", 12, Color(1.0, 1.0, 1.0, 0.55))
+	_pad_label.name = "Manette"
+	UiKit.anchor(_pad_label, Control.PRESET_BOTTOM_RIGHT)
+	_pad_label.offset_right = -12.0
+	_pad_label.offset_top = -26.0
+	_pad_label.offset_bottom = -8.0
+	_pad_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_pad_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_pad_label.visible = false
+	add_child(_pad_label)
 
 
 ## Le mot empile en six copies decalees vers le bas et la droite : cela donne une
@@ -861,6 +1162,34 @@ func _logo_band() -> Control:
 	_splash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_splash_holder.add_child(_splash)
 	return band
+
+
+## Pose une couche de relief sur la ligne d'horizon et lui dessine son profil.
+##
+## Le noeud est **ancre en bas**, comme la bande d'herbe et la brume, et non
+## pose a une position absolue. La difference se voit des la premiere image :
+## une position absolue est calculee sur une largeur capturee au passage, et
+## entre cette mesure et l'affichage la fenetre a deja souvent change — le
+## relief se retrouvait alors 24 px sous le gazon. L'ancre suit la fenetre
+## toute seule, puisque `_process` relance la mise en page a chaque
+## redimensionnement.
+##
+## `sink` est la profondeur sous l'herbe a laquelle la couche s'enfonce. Sans
+## elle, le bas du relief se poserait a plat sur le gazon ; enfonce de la
+## hauteur d'un bandeau, il en sort, ce qui est l'effet voulu.
+func _layout_ridge(node: Ridge, cell: float, max_blocks: int,
+		with_trees: bool, ground: float, sink: float) -> void:
+	if node == null:
+		return
+	_shape_ridge(node, cell, max_blocks, with_trees)
+	var peak := 0
+	for h in node.heights:
+		peak = maxi(peak, h)
+	var height := float(peak) * node.cell
+	UiKit.anchor(node, Control.PRESET_BOTTOM_WIDE)
+	node.offset_bottom = -(ground + sink)
+	node.offset_top = node.offset_bottom - height
+	node.queue_redraw()
 
 
 ## Place le mot et l'accroche comme un seul bloc centre sur la bande.
@@ -930,7 +1259,7 @@ func _menu_card() -> Control:
 	host.alignment = BoxContainer.ALIGNMENT_CENTER
 	card.add_child(host)
 
-	_main_box = _panel_box(10.0)
+	_main_box = _panel_box(8.0)
 	host.add_child(_main_box)
 	_play_button = UiKit.mc_primary_button("Jouer", 18)
 	_play_button.custom_minimum_size = Vector2(BUTTON_SIZE.x, 56.0)
@@ -942,15 +1271,23 @@ func _menu_card() -> Control:
 	create.pressed.connect(_show_new_panel)
 	_main_box.add_child(create)
 
-	_load_button = UiKit.mc_button("Charger la partie")
+	# « Charger la partie » est devenu « Mes mondes… » : un bouton unique ne
+	# pouvait pas dire quel monde on reprend, et empechait d'en garder deux. Le
+	# panneau derriere sait charger, creer et effacer.
+	_load_button = UiKit.mc_button("Mes mondes…")
 	_load_button.custom_minimum_size = BUTTON_SIZE
-	_load_button.pressed.connect(func(): load_requested.emit())
+	_load_button.pressed.connect(_show_worlds_panel)
 	_main_box.add_child(_load_button)
 
 	var online := UiKit.mc_button("Multijoueur…")
 	online.custom_minimum_size = BUTTON_SIZE
 	online.pressed.connect(_show_net_panel)
 	_main_box.add_child(online)
+
+	var options := UiKit.mc_button("Réglages…")
+	options.custom_minimum_size = BUTTON_SIZE
+	options.pressed.connect(_show_options_panel)
+	_main_box.add_child(options)
 
 	var quit := UiKit.mc_button("Quitter")
 	quit.custom_minimum_size = BUTTON_SIZE
@@ -962,7 +1299,7 @@ func _menu_card() -> Control:
 	_main_box.add_child(keys)
 
 	# Les boutons du menu principal apparaissent en cascade (voir `_play_entry`).
-	_buttons = [_play_button, create, _load_button, online, quit]
+	_buttons = [_play_button, create, _load_button, online, options, quit]
 
 	_new_box = _panel_box(10.0)
 	_new_box.visible = false
@@ -973,6 +1310,24 @@ func _menu_card() -> Control:
 	_net_box.visible = false
 	host.add_child(_net_box)
 	_build_net_panel()
+
+	_options_box = TitleOptions.new()
+	_options_box.name = "PanneauReglages"
+	_options_box.visible = false
+	# Le reglage ne fait qu'ecrire dans `Settings` et annoncer le changement :
+	# c'est cet ecran qui sait quoi en faire, cote sons et joueur.
+	_options_box.changed.connect(_on_setting_changed)
+	_options_box.back_requested.connect(_show_main_panel)
+	host.add_child(_options_box)
+
+	_worlds_box = TitleWorlds.new()
+	_worlds_box.name = "PanneauMondes"
+	_worlds_box.visible = false
+	_worlds_box.load_slot.connect(func(slot: int): slot_load_requested.emit(slot))
+	_worlds_box.create_slot.connect(func(slot: int): slot_create_requested.emit(slot))
+	_worlds_box.delete_slot.connect(func(slot: int): slot_delete_requested.emit(slot))
+	_worlds_box.back_requested.connect(_show_main_panel)
+	host.add_child(_worlds_box)
 	return card
 
 
@@ -992,6 +1347,14 @@ func _build_new_panel() -> void:
 	var title := UiKit.label("Nouveau monde", 18, UiKit.ACCENT)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_new_box.add_child(title)
+
+	# Le nom vient avant la graine : c'est le seul champ que le joueur ecrit
+	# pour lui-meme plutot que pour le monde, et le mettre en premier evite
+	# qu'un nom soit saisi apres la creation — donc jamais.
+	_name_field = UiKit.mc_field("Nom du monde (facultatif)")
+	_name_field.custom_minimum_size = BUTTON_SIZE
+	_name_field.text_submitted.connect(func(_text: String): _seed_field.grab_focus())
+	_new_box.add_child(_name_field)
 
 	_seed_field = UiKit.mc_field("Graine (vide = aléatoire)")
 	_seed_field.custom_minimum_size = BUTTON_SIZE
@@ -1016,6 +1379,15 @@ func _build_new_panel() -> void:
 		12, HINT_COLOR)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_new_box.add_child(hint)
+
+
+## Ouvre « Nouveau monde » sur un emplacement donne. C'est le chemin de « Créer »
+## dans « Mes mondes » : choisir son graine et sa portee AVANT que l'emplacement
+## ne soit pris, plutot que de creer un monde puis de decouvrir qu'il n'a pas le
+## nom voulu.
+func create_in_slot(slot: int) -> void:
+	_pending_slot = slot
+	_show_new_panel()
 
 
 ## Panneau « Multijoueur » : heberger une partie, ou rejoindre celle d'un autre.
@@ -1169,35 +1541,102 @@ func _distance_row() -> HBoxContainer:
 
 # -------------------------------------------------------------------- panneaux
 
+## Les cinq panneaux partagent la meme carte : un seul est visible a la fois.
+## Passer de l'un a l'autre passe par ici plutot que par des affectations
+## eparses — c'est ce qui garantit qu'aucun panneau ne peut rester visible
+## accidentellement, et qu'un panneau qu'on vient de quitter ne reprend jamais le
+## focus.
+func _show_only(box: VBoxContainer) -> void:
+	for panel: Control in [_main_box, _new_box, _net_box, _options_box, _worlds_box]:
+		if panel != null:
+			panel.visible = panel == box
+
+
+## Annule une suppression en attente. Appele a chaque changement de panneau :
+## quitter « Mes mondes » doit rester sans consequence, sinon un joueur qui
+## reviendrait trouverait « Confirmer ? » arme sur un bouton qu'il avait oublie.
+func _clear_pending() -> void:
+	if _worlds_box != null:
+		_worlds_box.cancel_pending()
+
+
 func _show_main_panel() -> void:
-	_main_box.visible = true
-	_new_box.visible = false
-	_net_box.visible = false
+	_clear_pending()
+	_pending_slot = 0
+	_show_only(_main_box)
 	_fade_in(_main_box)
-	# Le focus suit le panneau : au clavier, on ne reste pas sur un bouton
-	# devenu invisible, ou la touche Entree ne ferait plus rien de lisible.
+	# Le focus suit le panneau : au clavier comme a la manette, on ne reste pas
+	# sur un bouton devenu invisible, ou la touche Entree ne ferait plus rien de
+	# lisible.
 	if _play_button != null:
 		_play_button.grab_focus()
 
 
 func _show_new_panel() -> void:
-	_main_box.visible = false
-	_net_box.visible = false
-	_new_box.visible = true
+	_clear_pending()
+	_show_only(_new_box)
 	_fade_in(_new_box)
-	if _seed_field != null:
-		_seed_field.grab_focus()
+	_show_new_panel_target()
+
+
+## Le focus part du nom quand un emplacement vient d'etre choisi : c'est le
+## champ qu'on est venu renseigner. Sinon, de la graine, qui est le cas le plus
+## courant — « Jouer » puis « Nouveau monde… » sans avoir de nom a donner.
+func _show_new_panel_target() -> void:
+	var target := _name_field if _pending_slot > 0 else _seed_field
+	if target != null:
+		target.grab_focus()
 
 
 func _show_net_panel() -> void:
-	_main_box.visible = false
-	_new_box.visible = false
-	_net_box.visible = true
+	_clear_pending()
+	_show_only(_net_box)
 	if _local_ip_label != null:
 		_local_ip_label.text = "Ton adresse : %s" % local_address()
 	_fade_in(_net_box)
 	if _address_field != null:
 		_address_field.grab_focus()
+
+
+## Le panneau des reglages se recharge a chaque ouverture : un volume ou une
+## portee a pu changer depuis la pause, et un panneau qui afficherait une valeur
+## perimee ferait douter du regle plutot que du menu.
+func _show_options_panel() -> void:
+	_clear_pending()
+	_show_only(_options_box)
+	_fade_in(_options_box)
+	_options_box.refresh()
+	_focus_first(_options_box)
+
+
+## Le panneau des mondes aussi se recharge : une partie peut avoir ete
+## sauvegardee en pause juste avant de revenir au titre.
+func _show_worlds_panel() -> void:
+	_show_only(_worlds_box)
+	_fade_in(_worlds_box)
+	_worlds_box.refresh()
+	_focus_first(_worlds_box)
+
+
+## Premier bouton d'un panneau, pour que la croix directionnelle de la manette
+## parte de la et pas de la carte entière. Sans cela, il faut appuyer sur bas
+## avant d'atteindre le moindre bouton apres chaque ouverture.
+func _focus_first(box: Control) -> void:
+	if box == null:
+		return
+	var button := _first_button(box)
+	if button != null:
+		button.call_deferred("grab_focus")
+
+
+func _first_button(node: Node) -> Button:
+	if node is Button and (node as Button).visible and not (node as Button).disabled:
+		return node
+	for child in node.get_children():
+		var found := _first_button(child)
+		if found != null:
+			return found
+	return null
 
 
 ## Petit fondu a l'ouverture d'un panneau : le changement ne claque plus.
@@ -1211,19 +1650,71 @@ func _fade_in(box: Control) -> void:
 ## retour possible depuis le titre, et il est attendu partout. Sur le panneau
 ## principal, Echap ne fait rien — quitter le jeu sur une touche reflexe serait
 ## une mauvaise surprise.
+##
+## Le premier Echap ne fait que rendre le focus au menu : un champ de saisie
+## garde la touche pour lui, et le panneau ne disparaitrait pas sous le joueur
+## au moment ou il tape sa graine.
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible or not event.is_action_pressed("pause"):
 		return
+	# Un champ de saisie a la priorite : c'est lui qui utilise Echap pour
+	# s'effacer, et lui retirer le focus se cacherait derriere un panneau entier.
 	if _seed_field != null and _seed_field.has_focus():
 		_seed_field.release_focus()
 		get_viewport().set_input_as_handled()
 		return
-	if _new_box.visible or _net_box.visible:
+	if _address_field != null and _address_field.has_focus():
+		_address_field.release_focus()
+		get_viewport().set_input_as_handled()
+		return
+	if _panel_open() != _main_box:
 		_show_main_panel()
+		get_viewport().set_input_as_handled()
+		return
+	# Sur « Mes mondes », Echap annule d'abord une suppression en attente. Le
+	# joueur qui a arme la confirmation par reflexe ne doit pas se retrouver
+	# sur le panneau principal avec la suppression toujours en attente.
+	if _pending_delete_armed():
+		_clear_pending()
 		get_viewport().set_input_as_handled()
 
 
+## Le panneau ouvert, ou le panneau principal si aucun ne l'est.
+func _panel_open() -> Control:
+	for panel: Control in [_new_box, _net_box, _options_box, _worlds_box]:
+		if panel != null and panel.visible:
+			return panel
+	return _main_box
+
+
+## Une suppression est-elle en attente de second appui ?
+func _pending_delete_armed() -> bool:
+	return _worlds_box != null and _worlds_box.has_pending_delete()
+
+
 # -------------------------------------------------------------------- actions
+
+## Applique un reglage aussitot que possible.
+##
+## Le son est le seul reglage dont l'effet s'entend sur ce panneau : le volume doit
+## suivre le curseur pendant qu'on le bouge, sinon on ne sait pas si la valeur
+## affichee est celle qu'on entend. Les autres — champ de vision, portee, rendu —
+## n'ont rien a quoi s'appliquer tant qu'aucune partie ne tourne : ils sont dans
+## `Settings`, et `Main` les lit au lancement de la suivante.
+func _on_setting_changed(key: String, new_value: Variant) -> void:
+	var sounds := _sounds_node()
+	if sounds == null:
+		return
+	if key == "music":
+		sounds.set_music_scale(float(new_value))
+	elif key == "sfx":
+		sounds.set_sfx_scale(float(new_value))
+	elif key == "render_distance":
+		# La portee du panneau « Nouveau monde » et celle du reglage sont le meme
+		# chiffre : les laisser diverger donnerait deux valeurs pour un seul
+		# reglage, dont une qu'on ne pourrait plus comprendre.
+		_distance = clampi(int(new_value), 2, 14)
+		_update_distance()
 
 ## Lance l'hote. La graine est celle du champ du panneau « Nouveau monde » : on
 ## joue sur le meme monde que la partie solo, et l'utilisateur peut ainsi
@@ -1254,7 +1745,24 @@ func _parse_port() -> int:
 
 
 func _on_create() -> void:
-	play_requested.emit(parse_seed(_seed_field.text), _distance)
+	var seed_value := parse_seed(_seed_field.text)
+	if _pending_slot > 0:
+		# Un emplacement a ete choisi dans « Mes mondes » : c'est lui qui
+		# recoit la partie, et elle porte le nom saisi. `Main` fait le reste —
+		# l'ecran titre n'a pas de monde a ouvrir.
+		slot_create_requested.emit(_pending_slot, _world_name(), seed_value, _distance)
+		_pending_slot = 0
+		return
+	play_requested.emit(seed_value, _distance)
+
+
+## Nom saisi, rogne. Vide si le champ n'existe pas ou n'a rien : le monde sera
+## alors nomme par sa date, ce qui vaut mieux qu'un emplacement de trois lettres
+## coupees a « Mo ».
+func _world_name() -> String:
+	if _name_field == null:
+		return ""
+	return _name_field.text.strip_edges()
 
 
 func _change_distance(delta: int) -> void:
@@ -1289,6 +1797,39 @@ static func _net_node() -> Node:
 	if tree == null or tree.root == null:
 		return null
 	return tree.root.get_node_or_null("Net")
+
+
+## Ouvre un panneau par son nom. Sert au mode `--titletest`, qui doit photographier
+## chaque panneau : passer par les boutons serait impossible sans une souris, et
+## les captures de diagnostic justement n'en ont pas.
+##
+## Renvoie false si le nom n'existe pas, plutot que de lever une erreur : un typo
+## dans la commande de diagnostic ne doit pas planter le jeu.
+func show_panel(panel: String) -> bool:
+	match panel:
+		"main":
+			_show_main_panel()
+		"new":
+			_show_new_panel()
+		"net":
+			_show_net_panel()
+		"worlds":
+			_show_worlds_panel()
+		"options":
+			_show_options_panel()
+		_:
+			return false
+	return true
+
+
+## Recharge les panneaux qui lisent le disque ou les reglages. Appele apres une
+## action qui les change d'exterieur — un effacement d'emplacement — sinon une
+## ligne afficherait encore un monde qui n'existe plus.
+func refresh_panels() -> void:
+	if _options_box != null:
+		_options_box.refresh()
+	if _worlds_box != null:
+		_worlds_box.refresh()
 
 
 func has_preview() -> bool:

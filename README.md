@@ -1,4 +1,19 @@
-# Cubecraft
+<p align="center">
+  <a href="docs/screenshots/vue.png">
+    <img src="docs/screenshots/vue.png" width="880"
+         alt="Vue en jeu : une foret de chenes, un cochon et un zombie devant le joueur">
+  </a>
+</p>
+
+<h1 align="center">Cubecraft</h1>
+
+<p align="center">
+  <img alt="Godot 4.7" src="https://img.shields.io/badge/Godot-4.7-478cbf">
+  &nbsp;
+  <img alt="GDScript" src="https://img.shields.io/badge/GDScript-355570">
+  &nbsp;
+  <img alt="multijoueur ENet, 8 joueurs" src="https://img.shields.io/badge/multijoueur-ENet%20%C2%B7%208%20joueurs-4c8c4c">
+</p>
 
 Un jeu de type Minecraft en voxel, écrit en GDScript pour **Godot 4.7**, et
 **entièrement procédural** : les textures, les sons, le terrain, les arbres et
@@ -9,6 +24,36 @@ Kenney Vleugels qui remplace *quelques* tuiles et icônes par des dessins
 prêts à l'emploi. Il est purement optionnel : supprimer le dossier rend le jeu
 exactement tel qu'il était, tout simplement un peu moins dessiné
 (`scripts/gen/ExternalTiles.gd`, licence dans `assets/kenney/LICENSE-kenney.txt`).
+
+## Captures
+
+Les images viennent du jeu lui-même : chacune est produite par un mode de
+capture en ligne de commande, jamais dessinée à la main. Elles se régénèrent
+avec `godot --fpshot`, `godot --pauseshot` et `godot --titletest`, et vivent
+dans [`docs/screenshots/`](docs/screenshots/).
+
+<table>
+  <tr>
+    <td align="center" valign="top">
+      <a href="docs/screenshots/titre.png">
+        <img src="docs/screenshots/titre.png" width="300" alt="Écran titre">
+      </a>
+      <br><sub><b>Écran titre</b> — ciel, logo et aperçu du personnage</sub>
+    </td>
+    <td align="center" valign="top">
+      <a href="docs/screenshots/inventaire.png">
+        <img src="docs/screenshots/inventaire.png" width="300" alt="Inventaire et fabrication">
+      </a>
+      <br><sub><b>Inventaire</b> — 36 places, fabrication 2×2</sub>
+    </td>
+    <td align="center" valign="top">
+      <a href="docs/screenshots/pause.png">
+        <img src="docs/screenshots/pause.png" width="300" alt="Menu pause">
+      </a>
+      <br><sub><b>Menu pause</b> — sauvegarde, rendu, météo</sub>
+    </td>
+  </tr>
+</table>
 
 ## Lancer le jeu
 
@@ -23,9 +68,10 @@ godot --shader=1                       # rendu au lancement (1 chaleureux, 2 vif
 ```bash
 godot --screenshot --seconds=10        # diagnostic : monde en ASCII puis sortie
 godot --loadingshot                    # capture l'ecran de chargement
-godot --titletest --seconds=2          # capture l'ecran titre
+godot --titletest --seconds=2          # capture les 5 panneaux du titre
 godot --fpshot                         # capture la vue subjective (design)
 godot --pauseshot                      # capture pause et inventaire (2 PNG)
+godot --titletest                      # idem, 5 PNG (voir plus bas)
 godot --debugshot                      # capture le menu de debug (F4)
 godot --debugrun                       # lance les verifications par le menu
 godot --uitest                         # 86 verifications d'interface
@@ -37,7 +83,10 @@ a lire. Le PNG est ecrit dans `user://cubecraft_capture.png`
 (`~/Library/Application Support/Godot/app_userdata/Cubecraft` sur macOS).
 `--pauseshot` en ecrit deux, nommes : `cubecraft_pause.png` et
 `cubecraft_inventory.png` — c'est la seule facon de verifier a l'œil le design
-des icones d'inventaire.
+des icones d'inventaire. `--titletest` en ecrit cinq, un par panneau du menu de
+lancement (`cubecraft_titre_main.png`, `..._new`, `..._worlds`, `..._options`,
+`..._net`) : les reglages et la liste des mondes ne s'ouvrent qu'au clic, et sans
+ce mode ils ne seraient jamais regardes.
 
 `--fpshot` est la capture de **contrôle du design** et non de diagnostic : elle
 place le joueur debout devant la forêt la plus proche, à la même hauteur d'œil
@@ -60,6 +109,7 @@ capture pas au hasard.
 | Clic molette | prendre le bloc visé |
 | `1`…`9`, molette | changer d'emplacement |
 | `E` | inventaire (fabrication 2×2) |
+| `T` ou `/` | chat (ouvre la saisie, la souris est libérée) |
 | `G` | jeter l'objet tenu |
 | `F3` | informations (FPS, position, biome, chunks) |
 | `F4` ou `Ctrl`+`Alt`+`D` | menu de diagnostic (voir plus bas) |
@@ -69,6 +119,51 @@ capture pas au hasard.
 
 Les touches sont enregistrées par `InputSetup` au démarrage, avec des
 `physical_keycode` : sur un clavier AZERTY, `{Z}` et `{W}` déclenchent « avancer ».
+
+### Manette
+
+Le jeu se joue à la manette, sans réglage : la correspondance est dans
+`InputSetup`, à côté du clavier.
+
+| Manette | Action |
+|---|---|
+| Stick gauche | se déplacer |
+| Stick droit | regarder (la vitesse suit l'inclinaison) |
+| `A` | sauter / monter en vol |
+| `B` | jeter l'objet tenu |
+| `X` | inventaire |
+| `Y` | activer le vol |
+| `LB` / `RB` | poser un bloc / miner |
+| `LT` / `RT` | prendre le bloc visé / emplacement suivant |
+| Croix | parcourir les menus, `Start` ouvre la pause |
+
+Une manette branchée est signalée en bas à droite de l'écran de lancement.
+La navigation des menus passe par le focus : la croix déplace le rectangle
+jaune, `A` valide, `B` ou `Start` revient en arrière.
+
+## Écran de lancement
+
+Cinq panneaux partagent la même carte, pour qu'aucun ne fasse sauter la mise en
+page : principal, nouveau monde, mondes, réglages, multijoueur. `Échap` revient
+au panneau principal depuis n'importe lequel.
+
+- **Jouer** — partie immédiate, dans le premier emplacement de sauvegarde libre.
+- **Mes mondes…** — les six emplacements, avec leur nom, leur graine et la date
+  de sauvegarde. On y crée un monde, on en reprend un, ou on en efface un.
+  Effacer demande deux fois : le bouton devient rouge et affiche « Confirmer ? ».
+- **Réglages…** — musique, bruitages, champ de vision, sensibilité, portée de
+  rendu, mode de rendu, inversion de l'axe vertical. Tout est enregistré dans
+  `user://cubecraft_settings.json` et reappliqué au lancement suivant ; le son
+  s'ajuste pendant qu'on le bouge.
+
+### Sauvegardes
+
+Les parties vivent dans `user://saves/`, une par emplacement, avec un index
+d'en-têtes (`index.json`) : lister les mondes ne relit donc pas les fichiers, qui
+pèsent plusieurs mégaoctets dès qu'on a joué un peu.
+
+L'ancienne sauvegarde unique (`user://cubecraft_save.json`) est reprise comme
+emplacement 1 au premier lancement de cette version, puis déplacée.
 
 ## Boucle de jeu
 
@@ -87,8 +182,39 @@ colonne donnent 4 bâtons, et ainsi de suite jusqu'à la pioche en fer.
 | fer brut + charbon | lingot de fer |
 | 3 lingots + 2 bâtons | pioche en fer |
 | 9 lingots | 1 bloc de fer |
+| 3 diamants + 2 bâtons | pioche en diamant (minerai de diamant) |
+| 4 diamants + bâton | épée en diamant |
+| 2×2 sable | 1 verre |
+| 4 pierres taillées (sans forme) | 4 briques |
 
 Clic droit sur l'établi (posé ou tenu) pour la grille 3×3 complète.
+
+### Les quatre paliers de minage
+
+Chaque minerai porte le palier d'outil qu'il exige, et la pioche le fournit :
+
+| Minerai | Palier | Ce qu'il faut | Profondeur |
+|---|---|---|---|
+| charbon | 1 | pioche en bois | jusqu'à y = 62 |
+| fer | 2 | pioche en pierre | jusqu'à y = 46 |
+| or | 3 | pioche en fer | jusqu'à y = 34 |
+| diamant | 4 | pioche en diamant | jusqu'à y = 20 |
+
+Le palier 4 est le seul qui se verrouille lui-même : le diamant ne s'obtient
+qu'avec la pioche en diamant, et cette pioche ne se fabrique qu'avec du
+diamant. Oublier l'un des deux et la progression s'arrête définitivement — c'est
+voulu, et c'est aussi ce que vérifie `tools/CheckContent.gd`.
+
+Creuser plus profond est donc la seule progression : à mains nues ou avec la
+mauvaise pioche, le bloc se détruit et ne rend **rien**.
+
+### Les blocs dangereux
+
+Depuis peu, certains blocs infligent des dégâts **au contact** : rester contre
+de la lave retire 2 cœurs toutes les demi-secondes (la lave est incassable, la
+seule façon d'en sortir est de mourir), et se frotter à un cactus en retire un.
+Le torse est échantillonné aussi bien que les pieds, pour qu'un bloc situé à
+hauteur de poitrine ne soit pas un abri.
 
 ## Écran titre et chargement
 
@@ -101,6 +227,18 @@ lueur et vignette en 64×64, tuiles de 16×16 pour l'herbe et la terre.
   menu et le monde se répondent au lieu de se ressembler vaguement. L'atlas
   n'existant pas hors du jeu, l'écran retombe sur un bruit local quand il est
   instancié par le test de fumée.
+- **Relief de voxels sur l'horizon** : deux couches de terrain dessinées au
+  carré **depuis les tuiles du jeu** — la face du dessus au sommet de chaque
+  colonne, le flanc en dessous, le tout tracé en `_draw()` sans maillage 3D. La
+  couche proche (26 px le bloc) porte des arbres faits des mêmes tuiles de
+  tronc et de feuilles que ceux du monde ; la couche lointaine (13 px) est plus
+  basse, plus petite et **noyée dans la brume du ciel**, ce qui lui donne
+  l'écart sans flou. Le profil vient d'un bruit à graine fixe et **périodique** :
+  la période (4056 px) est un multiple exact des deux côtés de bloc, donc le
+  raccord tombe sur une colonne et l'horizon ne saute pas quand on élargit la
+  fenêtre. Comme les autres bandes, les deux couches sont **ancrées en bas** :
+  une position absolue calculée sur une largeur capturée au passage dérivait de
+  la hauteur de l'herbe dès que la fenêtre changeait de taille.
 - **Logo détouré** : huit tranches décalées (au lieu de six) donnent l'épaisseur,
   et un contour sombre — `font_outline_color` du thème — détache les lettres du
   ciel, ce qui le fait lire comme un logo gravé et non comme un titre écrit.
@@ -146,15 +284,16 @@ scenes/Main.tscn          une seule scène ; tout le reste est construit en code
 scripts/
   Main.gd                 assemblage, chargement, boucle, diagnostic
   core/    Vox            constantes et indexation des chunks
-           Blocks/Items   catalogues (18 blocs, 7 objets, 1 bloc par bloc)
+           Blocks/Items   catalogues (27 blocs, 11 objets, 1 bloc par bloc)
            Recipes        recettes + moteur d'appariement
            Inventory      36 emplacements, barre rapide
            Game           autoload : pause, écrans, sauvegarde, liaison scène
-           InputSetup     autoload : touches
+           InputSetup     autoload : touches, manette
            Checklist      journal de vérifications, partagé test et menu
            Diagnostics    les 86 vérifications, jouables depuis le menu (F4)
            Net            autoload ENet : salon, admissions, diffusion
-           SaveSystem     JSON compressé dans user://
+           SaveSystem     emplacements compressés dans user://, + index
+           Settings       réglages persistants, bornés à la lecture
            Assets         registre statique des textures et matériaux
   world/   WorldGen       heightmap, biomes, cavernes, minerais, arbres
            ChunkMesher    culling de faces + occlusion ambiante, 3 surfaces
@@ -175,16 +314,25 @@ scripts/
            DebugMenu  panneau de diagnostic (F4), journal et vérifications
            PostFx     post-traitement d'écran cyclable (F6), un seul passage
            Lobby      salon d'attente en réseau
-           TitleScreen    menu, ciel procédural, logo et accroche animés
+           TitleScreen    menu, ciel procédural, relief de voxels, logo animé
+           TitleOptions   panneau des réglages
+           TitleWorlds    panneau des emplacements de sauvegarde
+           ChatUI         journal et saisie de chat, sans libérer le curseur
            SkinPreview    aperçu du personnage, dessiné à la main
            UiKit          charte : plaques, boutons, champ, barre de progression
   world/   Weather        pluie, neige, brouillard selon biome et altitude
-  gen/     TextureFactory atlas pixel-art   BlockIcons  icones de blocs isometriques
+  gen/     Tiles          la grille d'atlas : 8 colonnes × 7 lignes, 50 tuiles
+           TextureFactory atlas pixel-art   BlockIcons  icones de blocs isometriques
+           ExternalTiles  surcouche CC0 facultative (assets/kenney)
            SoundFactory  bruitages + musique
            SkinFactory  skin 64×64 peinte par code, format Minecraft
            Sounds         autoload : banque de bruitages, voix 3D, musique
 tools/SmokeTest.gd        test de bout en bout, sans écran
            NetTest/NetPeer  test réseau à trois processus (hôte + 2 clients)
+           CheckContent.gd  le contenu ajouté est-il vraiment atteignable ?
+           CheckLights.gd   le pool garde-t-il sa source quand on marche ?
+           CheckTitle.gd    le relief du menu boucle-t-il et repose-t-il au sol ?
+           TileDump/TreeDump/IconDump/CheckExternal  diagnostics ponctuels
 ```
 
 ### Décisions à connaître
@@ -367,6 +515,32 @@ dure 0,55 s, et une musique lancée dessous se ferait couper par l'entrée — e
 s'arrête en fondu de 0,3 s au départ vers une partie. Le salon d'attente fait
 exprès le silence : c'est là qu'on attend les autres joueurs.
 
+## Éclairage des torches
+
+La lave et la table d'enchantement émettent aussi, et pas comme des torches :
+elles sont dans la même liste que le monde tient à jour, avec leur propre
+`light` et leur propre couleur. Avant, toutes recevaient le même couple
+couleur/énergie — une table d'enchantement aussi orangée et aussi vive qu'un
+feu de camp. La portée et l'énergie sont maintenant lues sur le bloc, et seule
+la torche vacille, sur une phase décalée par emplacement : deux torches
+posées côte à côte ne doivent pas respirer ensemble.
+
+L'affectation des lumières est **collante**, et c'est le vrai gain. La version
+d'avant redistribuait les sources par distance à chaque recalcul, cinq fois par
+seconde : dès que le joueur bougeait, la lumière numéro 1 changeait de torche.
+Traverser un couloir de torches donnait un clignotement continu, dont la
+cause n'était visible nulle part. Une source garde donc sa lumière tant qu'elle
+reste dans le ressort ; seuls les emplacements libérés reçoivent les sources
+restantes, les plus proches d'abord. Une lumière qui s'éteint ne redevient
+disponible qu'une fois **complètement noire** : la reconnecter avant la fin du
+fondu la ferait bouger en plein fondu, ce qui se voit plus qu'une extinction un
+peu lente.
+
+Le composant ne lit plus `Game.player` mais un champ `follow` que `Main` renseigne.
+Un composant d'éclairage n'a rien à faire d'un singleton global, et surtout il
+devient testable hors du jeu — ce que `--script` rend possible, puisqu'il n'y a
+pas d'autoload dans ce mode.
+
 ## Multijoueur
 
 Hôte et clients en **ENet**, sur le réseau local, port 27015, huit joueurs au
@@ -438,9 +612,12 @@ vérifications se remplissent et que la partie repart.
 
 ```bash
 godot --headless --import                    # compile tout le projet
-godot --headless --script res://tools/SmokeTest.gd   # 496 verifications
+godot --headless --script res://tools/SmokeTest.gd   # 549 verifications
 godot --headless --uitest --distance=3       # 86 verifications d'interface
-godot --headless --script res://tools/NetTest.gd     # 66 verifications reseau
+godot --headless --script res://tools/NetTest.gd     # 67 verifications reseau
+godot --headless --script res://tools/CheckContent.gd # 30 : contenu atteignable
+godot --headless --script res://tools/CheckLights.gd  # 15 : eclairage dynamique
+godot --headless --script res://tools/CheckTitle.gd   # 22 : relief du menu
 godot --headless --script res://tools/TileDump.gd -- grass_side   # une tuile en ASCII
 godot --headless --script res://tools/TreeDump.gd                   # un arbre en coupe
 godot --headless --script res://tools/IconDump.gd                    # les icones de blocs
@@ -467,17 +644,58 @@ seul test, deux portes d'entrée — la console au démarrage, le menu en partie
 Le test réseau (`NetTest`) lance de **vrais processus** — un hôte et deux
 clients, car deux `MultiplayerAPI` ne peuvent pas coexister dans un seul
 `SceneTree` — et vérifie l'admission, l'annonce de tenue, les positions
-diffusées et le salon d'attente.
+diffusées, le salon d'attente, le chat, et le **retour arrière** d'une édition
+que l'hôte refuse : le client doit avoir reçu l'ordre de revenir, et son calque
+ne doit plus porter le bloc refusé.
+
+Trois tests de plus, plus courts, répondent à des questions que les trois
+premiers ne posent pas. Les checks d'une suite vérifient des invariants de
+structure — un bloc déclaré mais que rien ne génère, une recette que
+`match` ne reconnaît jamais, une lumière qui saute de torche à chaque pas :
+tout cela passe le test de fumée.
+
+- **`CheckContent.gd`** fait tourner le générateur et compte vraiment. Il génère
+  une grille de chunks et vérifie que l'or et le diamant y sont, **et qu'ils
+  n'y sont qu'à la bonne profondeur** : un minerai présent à y = 90 ne
+  rendrait pas la descente payante. Puis il fait passer les quatre nouvelles recettes
+  dans le moteur d'appariement, dont les briques dans une disposition en S —
+  qu'aucun schéma en ligne ou en colonne ne peut décrire, et qui ne passerait
+  donc pas si la recette avait été écrite en forme. Enfin il rejoue la règle de
+  `Game.on_block_broken` palier par palier : le diamant se refuse bien à la
+  pioche en fer, s'accepte à la pioche en diamant, et l'escalier des minerais
+  reste croissant.
+- **`CheckLights.gd`** pilote le vrai composant : il pose des blocs dans un
+  monde factice et appelle `_reassign` et `_advance` comme le jeu le ferait. Il
+  vérifie qu'une torche garde sa lumière sur cinq cases de marche, qu'une
+  source retirée s'éteint **sur place** et ne libère son emplacement qu'une
+  fois noire, qu'une torche lointaine n'évince pas une proche, et que la lave
+  et la torche n'ont ni la même couleur ni la même portée.
+- **`CheckTitle.gd`** instancie l'écran titre, fabrique l'atlas pour que le
+  relief ait ses vraies tuiles, et regarde ce qui est réellement dessiné : le
+  profil boucle-t-il sur une période, les arbres sont-ils posés sur des
+  sommets et espacés, les deux plans se distinguent-ils, et le relief repose-t-il
+  sur la même ligne de sol que la bande d'herbe.
+
+Tous trois se lancent en `--script`, où il n'y a pas d'autoload : c'est aussi
+pourquoi `TorchLights` prend sa cible dans un champ `follow` plutôt que de lire
+`Game.player`.
 
 ## Limites connues
 
-- Le multijoueur fonctionne en hôte/client sur ENet, avec un salon d'attente, mais
-  reste minimal : pas de conversation, pas de whitelist, pas de reprise de
-  session. Le monde est celui de l'hôte, ses modifications ne sont pas
-  sauvegardées pour les clients.
+- Le multijoueur fonctionne en hôte/client sur ENet, avec un salon d'attente et
+  un **chat** (`T`), mais reste minimal : pas de whitelist, pas de reprise de
+  session, aucun historique — le journal du bas de l'écran fait huit lignes et
+  chaque message s'efface au bout de douze secondes. Le monde est celui de l'hôte,
+  ses modifications ne sont pas sauvegardées pour les clients.
 - Le vol reste un mode de déplacement : les ressources sont toujours comptées.
-- La torche éclaire grâce à un pool de 8 lumières réassignées en continu :
-  au-delà, elle reste visible mais n'éclaire pas.
+- L'éclairage dynamique repose sur un pool de **16 lumières**, et le projet
+  relève pour cela `limits/opengl/max_lights_per_object` de 8 à 16 : le moteur
+  ne calcule que les N premières lumières touchant un objet, et un pool plus
+  grand que ce plafond gaspille la moitié de son travail sans rien montrer. Au-delà
+  de 16 sources dans le ressort, une torche reste visible mais n'éclaire pas.
+  Aucune de ces lumières ne projette d'ombre : seize ombres portées de plus de
+  six faces ne tiendraient pas soixante images par seconde, et c'est le seul
+  endroit du projet où le compromis a été fait en faveur du débit d'images.
 - La portée de rendu au-delà de 10 chunks devient coûteuse sur les machines
   modestes ; le menu pause permet de l'ajuster à la volée. L'ombre du soleil
   couvre 48 blocs et s'estompe au-delà : c'était 90, ce qui revenait à faire

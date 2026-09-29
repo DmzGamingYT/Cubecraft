@@ -31,6 +31,11 @@ const MC_PRIMARY := Color(0.29, 0.49, 0.28)
 const MC_PRIMARY_HOVER := Color(0.36, 0.62, 0.33)
 const MC_PRIMARY_EDGE := Color(0.64, 0.86, 0.56)
 const MC_SHADOW := Color(0.0, 0.0, 0.0, 0.45)
+## Face et arete du bouton de suppression, au repos puis en attente de
+## confirmation.
+const MC_DANGER := Color(0.45, 0.20, 0.18)
+const MC_DANGER_HOVER := Color(0.58, 0.26, 0.23)
+const MC_DANGER_EDGE := Color(0.88, 0.58, 0.53)
 
 
 static func panel(bg: Color = BG, border_width: int = 2, border_color: Color = BORDER,
@@ -106,6 +111,31 @@ static func mc_primary_button(text: String, font_size: int = 17) -> Button:
 		_mc_plate(MC_FILL_DISABLED, MC_EDGE_DIM, Vector2(0.0, 2.0)))
 	node.add_theme_stylebox_override("focus",
 		_mc_plate(MC_PRIMARY, MC_EDGE_FOCUS, Vector2(0.0, 3.0)))
+	return node
+
+
+## Bouton de suppression. Le rouge n'apparait nulle part ailleurs dans
+## l'interface : c'est ce qui distingue « ca efface » de tout le reste sans avoir
+## a lire le texte.
+##
+## `armed` est l'etat d'attente de confirmation : la face s'eclaircit, et c'est
+## a l'appelant de changer le texte. Un bouton qui vire au rouge SEUL se lirait
+## comme un simple effet de survol.
+static func mc_danger_button(text: String, font_size: int = 16, armed: bool = false) -> Button:
+	var fill := MC_DANGER_HOVER if armed else MC_DANGER
+	var node := _mc_base(text, font_size)
+	node.add_theme_stylebox_override("normal",
+		_mc_plate(fill, MC_DANGER_EDGE, Vector2(0.0, 3.0)))
+	node.add_theme_stylebox_override("hover",
+		_mc_plate(fill.lightened(0.10), MC_DANGER_EDGE, Vector2(0.0, 3.0)))
+	node.add_theme_stylebox_override("pressed",
+		_mc_plate(fill.darkened(0.25), MC_DANGER_EDGE, Vector2(0.0, 1.0)))
+	node.add_theme_stylebox_override("disabled",
+		_mc_plate(MC_FILL_DISABLED, MC_EDGE_DIM, Vector2(0.0, 2.0)))
+	node.add_theme_stylebox_override("focus",
+		_mc_plate(fill, MC_EDGE_FOCUS, Vector2(0.0, 3.0)))
+	if armed:
+		node.add_theme_color_override("font_color", Color(1.0, 0.88, 0.86))
 	return node
 
 
@@ -218,6 +248,103 @@ static func mc_field(placeholder: String, font_size: int = 16) -> LineEdit:
 	node.add_theme_stylebox_override("normal", style)
 	node.add_theme_stylebox_override("focus", style)
 	node.custom_minimum_size = Vector2(240, 40)
+	return node
+
+
+## Ligne de reglage : un intitule a gauche, un pas-a-pas a droite.
+##
+## Les enfants sont NOMMES (« Intitule », « Moins », « Valeur », « Plus ») plutot
+## que references : l'appelant n'a pas a conserver quatre variables qui pointent
+## sur la meme ligne, et une ligne reconstruite ne laisse pas un pointeur vers un
+## bouton qui n'existe plus.
+##
+## L'intitule prend toute la place libre et la valeur garde une largeur fixe :
+## sans cela, chaque changement de valeur decalerait tous les controles de la
+## colonne, et la ligne sautillerait sous le doigt.
+static func mc_stepper(text: String, value: String, row_width: float = 340.0,
+		value_width: float = 96.0) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.custom_minimum_size = Vector2(row_width, 0.0)
+	row.add_theme_constant_override("separation", 6)
+
+	var name_label := label(text, 14, TEXT_DIM)
+	name_label.name = "Intitule"
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(name_label)
+
+	row.add_child(mc_step_button("Moins", "−"))
+
+	var value_label := label(value, 15, TEXT)
+	value_label.name = "Valeur"
+	value_label.custom_minimum_size = Vector2(value_width, STEP_HEIGHT)
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(value_label)
+
+	row.add_child(mc_step_button("Plus", "+"))
+	return row
+
+
+## Le petit carre d'un pas-a-pas. Il n'a pas les 340 px d'un bouton d'action :
+## c'est un controle repete sur cinq lignes, et sa taille doit dire « reglage »
+## sans quoi la colonne se lit comme une liste de boutons.
+static func mc_step_button(node_name: String, glyph: String) -> Button:
+	var node := mc_button(glyph, 18)
+	node.name = node_name
+	node.custom_minimum_size = Vector2(STEP_SIZE, STEP_HEIGHT)
+	return node
+
+
+## Ligne de reglage a deux etats : l'intitule, et un bouton qui bascule. Un
+## interrupteur dessine serait plus parlant, mais il faudrait le construire
+## nous-memes ; un bouton qui dit « Oui » ou « Non » ne laisse aucun doute sur
+## l'etat courant, ce qui est l'essentiel.
+static func mc_toggle(text: String, value: String, row_width: float = 340.0) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.custom_minimum_size = Vector2(row_width, 0.0)
+	row.add_theme_constant_override("separation", 6)
+
+	var name_label := label(text, 14, TEXT_DIM)
+	name_label.name = "Intitule"
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(name_label)
+
+	var button := mc_button(value)
+	button.name = "Bouton"
+	button.custom_minimum_size = Vector2(TOGGLE_WIDTH, STEP_HEIGHT)
+	row.add_child(button)
+	return row
+
+
+## Cote des controles d'une ligne de reglage. Partages par `mc_stepper` et
+## `mc_toggle` pour que les deux familles de lignes s'alignent.
+##
+## 36 px et non 40 : la carte du menu est dimensionnee pour son panneau le plus
+## dense, et une ligne de 40px sur six ne laissait plus de place a deux boutons
+## en bas. Un cran de plus grand rendait le panneau de reglages plus haut que la
+## carte, qui s'etirait alors et ferait sauter le menu a chaque ouverture.
+const STEP_SIZE := 36.0
+const STEP_HEIGHT := 36.0
+const TOGGLE_WIDTH := 88.0
+
+
+## Titre de section dans une carte : une ligne discrete qui separe deux blocs
+## de reglages sans les couper en deux cartes.
+static func section_title(text: String) -> Label:
+	var node := label(text, 13, ACCENT)
+	node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	return node
+
+
+## Trait horizontal d'un pixel, de la largeur voulue. Deux groupes de controles
+## sans trait se lisent comme une seule liste longue.
+static func divider(width: float = 300.0) -> Control:
+	var node := ColorRect.new()
+	node.color = Color(1.0, 1.0, 1.0, 0.10)
+	node.custom_minimum_size = Vector2(width, 1.0)
+	node.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return node
 
 
