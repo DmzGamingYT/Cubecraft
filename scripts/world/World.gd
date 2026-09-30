@@ -315,13 +315,21 @@ func _unload_far(center: Vector2i) -> void:
 	# n'est plus rien : son chunk n'existe plus, `get_block` y rend de l'air,
 	# et la lumiere qu'elle detenait se met a eclairer le vide. La liste
 	# grossissait aussi sans fin au fur et a mesure que le joueur explore.
-	var dropped: Array = []
+	#
+	# Le parcours se fait en un seul passage, sur un ensemble : interroger un
+	# tableau `doomed` depuis la boucle sur les torches etait quadratique, et
+	# le `erase` un par un l'etait aussi. Rien ne conserve l'ancienne
+	# reference — `TorchLights` relit `world.torches` a chaque recalcul — donc
+	# la remplacer entiere ne casse aucun appelant.
+	var doomed_set := {}
+	for key in doomed:
+		doomed_set[key] = true
+	var staying := {}
 	for pos: Vector3i in torches:
 		var coords := Vox.chunk_of(pos)
-		if doomed.has(Vox.chunk_key(coords.x, coords.y)):
-			dropped.append(pos)
-	for pos in dropped:
-		torches.erase(pos)
+		if not doomed_set.has(Vox.chunk_key(coords.x, coords.y)):
+			staying[pos] = true
+	torches = staying
 
 
 func _schedule() -> void:
@@ -346,6 +354,10 @@ func _schedule() -> void:
 	var submitted := 0
 	for entry in wanted:
 		if submitted >= GENERATIONS_PER_FRAME or _inflight() >= max_tasks:
+			# Il reste du monde a produire : la prochaine image doit réessayer,
+			# sans attendre le filet de sécurité. C'est ce cas qui rend le
+			# chargement initial lent si on l'ignore — le test réseau le voit.
+			_schedule_dirty = true
 			break
 		_queued_gen[entry[3]] = true
 		WorkerThreadPool.add_task(_task_generate.bind(entry[1], entry[2]))
@@ -370,6 +382,7 @@ func _schedule() -> void:
 
 	for entry in candidates:
 		if _inflight() >= max_tasks:
+			_schedule_dirty = true
 			break
 		_queued_mesh[entry[3]] = true
 		_submit_mesh(entry[1], entry[2])
