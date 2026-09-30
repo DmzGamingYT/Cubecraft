@@ -37,7 +37,7 @@ jobs:
 
     steps:
       - name: Recuperer les sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Recuperer Godot
         run: |
@@ -52,7 +52,7 @@ jobs:
       # Le cache porte sur l'import des ressources, qui est long (textures,
       # sons et icones sont tous generes au premier lancement).
       - name: Cache de l'import
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .godot
           key: godot-import-${{ hashFiles('project.godot') }}
