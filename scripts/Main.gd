@@ -193,6 +193,12 @@ func _ready() -> void:
 		postfx.set_index(int(Settings.value("shader", 0)))
 	_build_loading()
 	_build_title()
+	# Avant tout premier affichage : l'echelle d'interface change la taille de la
+	# fenetre et sa taille minimale, donc tout ce qui se placera ensuite. Le
+	# poser plus tard laisserait le titre se mettre en page sur une grille puis
+	# se corriger a l'evenement de redimensionnement — un saut d'une image, au
+	# moment exact ou le joueur regarde le menu pour la premiere fois.
+	title.apply_ui_scale()
 	_build_debug_menu()
 	# Demarrage auto seulement sur demande explicite : sinon c'est l'ecran
 	# titre qui choisit la graine, et le monde attend ce choix.

@@ -37,6 +37,117 @@ const MC_DANGER := Color(0.45, 0.20, 0.18)
 const MC_DANGER_HOVER := Color(0.58, 0.26, 0.23)
 const MC_DANGER_EDGE := Color(0.88, 0.58, 0.53)
 
+## Eclaircissement de la face pour l'etat de focus.
+##
+## Le chiffre n'est pas au hasard : le focus doit battre le survol, et le
+## survol eclaircit la face lui aussi. A 30 %, le focus passe de 0,44 a 0,61 de
+## luminance la ou le survol plafonne a 0,54 — l'ecart se voit meme sans l'arete.
+## En dessous de 25 %, les deux se confondaient sur le bouton principal, dont le
+## vert de depart est deja clair.
+const MC_FOCUS_LIGHTEN := 0.30
+## Arete du focus : deux fois celle du repos, pour que le cadre se lise meme sur
+## une face deja eclaircie.
+const MC_FOCUS_EDGE := 4
+## Ombre portee du focus. Plus basse et plus large que celle du repos : la
+## plaque se detache comme si elle venait de se soulever. Le survol, lui, la
+## laisse intacte — c'est une difference de forme, pas de nuance de teinte.
+const MC_FOCUS_SHADOW := Vector2(0.0, 5.0)
+const MC_FOCUS_SHADOW_SIZE := 4
+
+# ---------------------------------------------------------------- echelle d'UI
+#
+# L'interface est dessinee en pixels fixes : la lisibilite ne depend donc pas de
+# la resolution, mais du nombre de pixels que la fenetre peut lui consacrer. Ces
+# constantes traduisent cette dependance en un plancher et en une echelle
+# ajustable.
+
+## Taille de fenetre qui affiche le menu de lancement en entier, a 100 %.
+##
+## C'est l'ecran titre qui fixe ce plancher, et de loin : son bloc fait 814 px
+## de large et 586 de haut — bandeau, rangee de cartes, ligne d'aide — quand
+## l'inventaire le plus large n'en demande que 486, et le menu pause encore
+## moins. Toute la mise en page du jeu tient donc dans ce rectangle, et une
+## fenetre plus petite rogne ce qui sort.
+##
+## Les marges autour du bloc sont volontaires : 814 px de contenu sur une fenetre
+## de 814 px se colle aux bords, et le menu n'a plus d'air.
+const MIN_WINDOW := Vector2i(880, 620)
+## Paliers de l'echelle d'interface. Le pas de 0,25 est assez fin pour qu'un
+## ecran 1080p gagne 25 % sans devenir illisible, et assez large pour que la
+## liste tienne sur une seule ligne.
+const UI_SCALE_MIN := 0.75
+const UI_SCALE_MAX := 2.0
+const UI_SCALE_STEP := 0.25
+
+
+## Taille de fenetre minimale a l'echelle demandee. Agrandir l'interface
+## agrandit ce que la fenetre doit contenir, sans quoi le menu se retrouve rogne
+## precisement la ou le joueur grossissait le texte pour mieux le lire.
+static func minimum_window_size(scale: float) -> Vector2i:
+	return Vector2i(roundi(MIN_WINDOW.x * scale), roundi(MIN_WINDOW.y * scale))
+
+
+## L'echelle demandee, ramenee au plus grand palier que cet ecran peut
+## afficher.
+##
+## Le plafond n'est pas une precaution mais une condition de survie : une
+## fenetre plus grande que l'ecran ne peut pas etre reduite, donc fixer un
+## minimum au-dela de l'ecran condamne le joueur a une interface qu'il ne peut
+## plus redescendre, sans meme voir le reglage qui l'a caused. Sur un ecran de
+## 1366x768, 150 % est donc refuse et l'interface reste a 100 %.
+##
+## La formule plafonne ET descend. Descendre compte autant : un ecran plus petit
+## que le plancher ne peut pas accueillir 100 %, et une echelle reduite est
+## precisement ce qui y remede — interdire ce remedy la laisserait transformer un
+## ecran un peu trop petit en interface illisible, quand le joueur demande
+## justement de la reducire.
+##
+## Le resultat descend toujours sur un palier du reglage : une valeur intermediaire
+## n'a pas de nom dans le menu, et le joueur ne verrait pas ce qu'il a choisi.
+static func fit_ui_scale(wanted: float, screen: Vector2i) -> float:
+	# Aucun ecran a l'appui — moteur sans fenetre, tests, capture : rien ne
+	# limite l'echelle. Le dire franchement vaut mieux que de borner sur un
+	# ecran de zero px, qui ferait afficher au menu un « max » sans sujet.
+	if screen.x <= 0 or screen.y <= 0:
+		return clampf(wanted, UI_SCALE_MIN, UI_SCALE_MAX)
+	var room := minf(float(screen.x) / float(MIN_WINDOW.x),
+		float(screen.y) / float(MIN_WINDOW.y))
+	# Nombre entier de paliers que l'ecran laisse, puis la plus petite des deux
+	# echelles : celle demandee, et celle qui tient.
+	var steps := floorf(room / UI_SCALE_STEP + 0.001)
+	return clampf(minf(steps * UI_SCALE_STEP, wanted), UI_SCALE_MIN, UI_SCALE_MAX)
+
+
+## Applique l'echelle a une fenetre, et rend la valeur reellement retenue.
+##
+## Le retour compte autant que l'effet : l'appelant doit pouvoir republier cette
+## valeur dans les reglages, sinon le menu affiche une echelle que le jeu
+## n'applique pas.
+static func apply_ui_scale(window: Window, wanted: float) -> float:
+	if window == null:
+		return wanted
+	var fitted := fit_ui_scale(wanted, screen_size(window))
+	window.content_scale_factor = fitted
+	window.min_size = minimum_window_size(fitted)
+	return fitted
+
+
+## Taille de l'ecran sur lequel la fenetre se trouve.
+##
+## Pas celle de l'ecran principal : un joueur en double ecran avec un second
+## ecran plus petit doit pouvoir y jouer, et c'est ce second ecran qui borne son
+## interface. Sans fenetre — le moteur sans ecran, les tests — la reponse est
+## vide, et `fit_ui_scale` y lit « aucune contrainte », ce qui est exact.
+static func screen_size(window: Window) -> Vector2i:
+	if window == null:
+		return Vector2i.ZERO
+	# `current_screen` vaut -1 tant que la fenetre n'a pas ete placee, et sur un
+	# poste qui ne signale pas d'ecran du tout. L'appel sans argument vise alors
+	# l'ecran principal, qui est le seul qui reste.
+	if window.current_screen >= 0:
+		return DisplayServer.screen_get_size(window.current_screen)
+	return DisplayServer.screen_get_size()
+
 
 static func panel(bg: Color = BG, border_width: int = 2, border_color: Color = BORDER,
 		radius: int = 5) -> StyleBoxFlat:
@@ -91,8 +202,7 @@ static func mc_button(text: String, font_size: int = 16) -> Button:
 		_mc_plate(MC_FILL_PRESSED, MC_EDGE_HOVER, Vector2(0.0, 1.0)))
 	node.add_theme_stylebox_override("disabled",
 		_mc_plate(MC_FILL_DISABLED, MC_EDGE_DIM, Vector2(0.0, 2.0)))
-	node.add_theme_stylebox_override("focus",
-		_mc_plate(MC_FILL, MC_EDGE_FOCUS, Vector2(0.0, 3.0)))
+	node.add_theme_stylebox_override("focus", _mc_focus_plate(MC_FILL))
 	return node
 
 
@@ -103,14 +213,17 @@ static func mc_primary_button(text: String, font_size: int = 17) -> Button:
 	var node := _mc_base(text, font_size)
 	node.add_theme_stylebox_override("normal",
 		_mc_plate(MC_PRIMARY, MC_PRIMARY_EDGE, Vector2(0.0, 3.0)))
+	# Le survol gardait l'arete du focus, ce qui donnait au bouton principal la
+	# seule arete claire de toute l'interface hors selection : un « Jouer » survole
+	# etait impossible a distinguer d'un « Jouer » selectionne. Il garde donc
+	# l'arete verte de sa famille, eclaircie, et le focus seul sort du lot.
 	node.add_theme_stylebox_override("hover",
-		_mc_plate(MC_PRIMARY_HOVER, MC_EDGE_FOCUS, Vector2(0.0, 3.0)))
+		_mc_plate(MC_PRIMARY_HOVER, MC_PRIMARY_EDGE.lightened(0.20), Vector2(0.0, 3.0)))
 	node.add_theme_stylebox_override("pressed",
 		_mc_plate(MC_PRIMARY.darkened(0.25), MC_PRIMARY_EDGE, Vector2(0.0, 1.0)))
 	node.add_theme_stylebox_override("disabled",
 		_mc_plate(MC_FILL_DISABLED, MC_EDGE_DIM, Vector2(0.0, 2.0)))
-	node.add_theme_stylebox_override("focus",
-		_mc_plate(MC_PRIMARY, MC_EDGE_FOCUS, Vector2(0.0, 3.0)))
+	node.add_theme_stylebox_override("focus", _mc_focus_plate(MC_PRIMARY))
 	return node
 
 
@@ -132,8 +245,7 @@ static func mc_danger_button(text: String, font_size: int = 16, armed: bool = fa
 		_mc_plate(fill.darkened(0.25), MC_DANGER_EDGE, Vector2(0.0, 1.0)))
 	node.add_theme_stylebox_override("disabled",
 		_mc_plate(MC_FILL_DISABLED, MC_EDGE_DIM, Vector2(0.0, 2.0)))
-	node.add_theme_stylebox_override("focus",
-		_mc_plate(fill, MC_EDGE_FOCUS, Vector2(0.0, 3.0)))
+	node.add_theme_stylebox_override("focus", _mc_focus_plate(fill))
 	if armed:
 		node.add_theme_color_override("font_color", Color(1.0, 0.88, 0.86))
 	return node
@@ -142,15 +254,17 @@ static func mc_danger_button(text: String, font_size: int = 16, armed: bool = fa
 ## Charte commune aux deux boutons : texte clair ombre, survol jaune, et le bruit
 ## d'interface branche une fois pour toutes.
 ##
-## `font_focus_color` est pose explicitement : sans lui, le bouton qui a le focus
-## — le premier du menu, des l'ouverture — prend la couleur du theme par defaut
-## et parait gris a cote de ses voisins.
+## `font_focus_color` est pose explicitement, et en blanc plein : sans lui, le
+## bouton qui a le focus — le premier du menu, des l'ouverture — prend la
+## couleur du theme par defaut et parait gris a cote de ses voisins. Il est
+## aussi plus clair que le survol, qui vire au jaune, pour que le texte suive
+## l'etat de la plaque plutot que de l'effacer.
 static func _mc_base(text: String, font_size: int) -> Button:
 	var node := Button.new()
 	node.text = text
 	node.add_theme_font_size_override("font_size", font_size)
 	node.add_theme_color_override("font_color", Color(0.94, 0.94, 0.94))
-	node.add_theme_color_override("font_focus_color", Color(0.94, 0.94, 0.94))
+	node.add_theme_color_override("font_focus_color", Color(1.0, 1.0, 1.0))
 	node.add_theme_color_override("font_hover_color", Color(1.0, 1.0, 0.78))
 	node.add_theme_color_override("font_hover_pressed_color", Color(1.0, 1.0, 0.78))
 	node.add_theme_color_override("font_pressed_color", Color(0.96, 0.96, 0.96))
@@ -213,6 +327,29 @@ static func _mc_plate(fill: Color, edge: Color, shadow_offset: Vector2) -> Style
 	return style
 
 
+## Plaque de focus : l'etat que le clavier et la manette doivent voir d'un coup
+## d'oeil, et que rien ne doit confondre avec le survol.
+##
+## Les deux se distinguaient mal : le survol repeignait toute la face en bleu
+## froid, quand le focus ne changeait qu'une arete de 2 px sur une face
+## identique. A la souris c'etait net ; au clavier et a la manette, la seule
+## difference etait un demi-teinte, et un joueur qui laisse sa souris sur un
+## bouton ne pouvait plus dire lequel des deux etats il regardait.
+##
+## Le focus change donc la FORME et pas seulement la teinte : la face
+## s'eclaircit dans la couleur de sa famille — verte sur un bouton principal,
+## rouge sur une suppression —, l'arete double, et l'ombre portee s'ecarte pour
+## soulever la plaque. La couleur de famille est conservee, parce qu'elle porte
+## une information : un bouton de suppression reste rouge lorsqu'il est
+## selectionne, et ne devient jamais neutre.
+static func _mc_focus_plate(fill: Color) -> StyleBoxFlat:
+	var style := _mc_plate(fill.lightened(MC_FOCUS_LIGHTEN), MC_EDGE_FOCUS,
+		MC_FOCUS_SHADOW)
+	style.set_border_width_all(MC_FOCUS_EDGE)
+	style.shadow_size = MC_FOCUS_SHADOW_SIZE
+	return style
+
+
 ## Carte de menu : fond translucide, arete claire, coins arrondis. Meme chose que
 ## `panel`, avec l'intention en plus : une carte laisse voir le decor derriere
 ## elle, un panneau du jeu en partie le cache.
@@ -246,7 +383,14 @@ static func mc_field(placeholder: String, font_size: int = 16) -> LineEdit:
 	style.content_margin_left = 10
 	style.content_margin_right = 10
 	node.add_theme_stylebox_override("normal", style)
-	node.add_theme_stylebox_override("focus", style)
+	# Le focus d'un champ etait identique a son repos : le curseur qui clignote
+	# est deja un indice, mais il disparait une fois sur deux, et lisible au
+	# clavier et a la manette il ne reste que la bordure. Elle double, donc.
+	var focused: StyleBoxFlat = style.duplicate()
+	focused.border_color = MC_EDGE_FOCUS
+	focused.set_border_width_all(MC_FOCUS_EDGE)
+	node.add_theme_stylebox_override("focus", focused)
+	node.add_theme_color_override("caret_color", Color(1.0, 1.0, 1.0))
 	node.custom_minimum_size = Vector2(240, 40)
 	return node
 

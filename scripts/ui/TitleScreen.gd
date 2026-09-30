@@ -169,6 +169,11 @@ var _new_box: VBoxContainer
 var _net_box: VBoxContainer
 var _options_box: TitleOptions
 var _worlds_box: TitleWorlds
+## Panneaux laisses derriere, du plus ancien au plus recent. Le menu principal
+## en est la racine et n'y figure jamais : « Retour » et Echap remontent la pile
+## au lieu de sauter au principal, ce qui faisait que « Nouveau monde » ouvert
+## depuis « Mes mondes » ne pouvait se quitter qu'en perdant sa place.
+var _panel_stack: Array[Control] = []
 ## Bandeau « Manette détectée » : il n'apparait que si une manette est reellement
 ## branchee, et c'est lui qui invite a naviguer a la croix directionnelle plutot
 ## qu'a la souris.
@@ -183,10 +188,18 @@ var _pending_slot := 0
 var _name_field: LineEdit
 var _address_field: LineEdit
 var _port_field: LineEdit
+## Graine de la partie hebergee. Elle se saisit dans le panneau reseau et non
+## dans celui du monde solo : lire le champ d'un autre panneau obligeait a ouvrir
+## « Nouveau monde » pour changer de graine, et comme ce champ est vide par
+## defaut, on hebergeait presque toujours en aleatoire sans le savoir.
+var _net_seed_field: LineEdit
 var _message_label: Label
 var _local_ip_label: Label
 var _load_button: Button
 var _play_button: Button
+## Ligne qui dit ou « Jouer » va enregistrer, et qui devient un avertissement
+## quand les six emplacements sont occupes.
+var _play_slot_label: Label
 var _preview: SkinPreview
 var _skin_index_label: Label
 var _hint: Label
@@ -435,7 +448,13 @@ func _pick_splash() -> String:
 ## depuis une partie.
 func show_menu(has_save: bool, default_distance: int) -> void:
 	visible = true
+	# Le titre reprend depuis sa racine : une pile restee de la session precedente
+	# ferait revenir le joueur dans un panneau qu'il avait ferme avant de jouer.
+	_panel_stack.clear()
+	_pending_slot = 0
+	_clear_pending()
 	_show_only(_main_box)
+	_update_play_slot()
 	_distance = clampi(default_distance, 2, 14)
 	_update_distance()
 	show_message("")
@@ -1263,8 +1282,16 @@ func _menu_card() -> Control:
 	host.add_child(_main_box)
 	_play_button = UiKit.mc_primary_button("Jouer", 18)
 	_play_button.custom_minimum_size = Vector2(BUTTON_SIZE.x, 56.0)
-	_play_button.pressed.connect(func(): play_requested.emit(randi(), _distance))
+	_play_button.pressed.connect(_on_play_pressed)
 	_main_box.add_child(_play_button)
+
+	# « Jouer » enregistre, et rien ne le disait : six parties rapides
+	# epuisaient les six emplacements, et le septieme clic detruisait un monde
+	# sans que rien ne l'ait annonce. La ligne sous le bouton rend la cible
+	# visible avant le clic, pas apres.
+	_play_slot_label = UiKit.label("", 12, HINT_COLOR)
+	_play_slot_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_main_box.add_child(_play_slot_label)
 
 	var create := UiKit.mc_button("Nouveau monde…")
 	create.custom_minimum_size = BUTTON_SIZE
@@ -1317,7 +1344,7 @@ func _menu_card() -> Control:
 	# Le reglage ne fait qu'ecrire dans `Settings` et annoncer le changement :
 	# c'est cet ecran qui sait quoi en faire, cote sons et joueur.
 	_options_box.changed.connect(_on_setting_changed)
-	_options_box.back_requested.connect(_show_main_panel)
+	_options_box.back_requested.connect(go_back)
 	host.add_child(_options_box)
 
 	_worlds_box = TitleWorlds.new()
@@ -1326,8 +1353,9 @@ func _menu_card() -> Control:
 	_worlds_box.load_slot.connect(func(slot: int): slot_load_requested.emit(slot))
 	_worlds_box.create_slot.connect(func(slot: int): slot_create_requested.emit(slot))
 	_worlds_box.delete_slot.connect(func(slot: int): slot_delete_requested.emit(slot))
-	_worlds_box.back_requested.connect(_show_main_panel)
+	_worlds_box.back_requested.connect(go_back)
 	host.add_child(_worlds_box)
+	_update_play_slot()
 	return card
 
 
@@ -1372,7 +1400,7 @@ func _build_new_panel() -> void:
 
 	var back := UiKit.mc_button("Retour")
 	back.custom_minimum_size = BUTTON_SIZE
-	back.pressed.connect(_show_main_panel)
+	back.pressed.connect(go_back)
 	_new_box.add_child(back)
 
 	var hint := UiKit.label("Plus la portée est grande, plus le monde coûte cher",
@@ -1407,12 +1435,26 @@ func _build_net_panel() -> void:
 	var hint := UiKit.label("Donne-la à tes amis pour qu'ils rejoignent", 12,
 		HINT_COLOR)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_net_box.add_child(hint)
+
+	# La graine se saisit ICI, dans le panneau ou l'on heberge, et elle est
+	# independante de celle du monde solo : ce sont deux mondes differents, et un
+	# champ partage ferait heriter a une partie reseau la graine d'un monde qu'on
+	# avait seulement prepare. Elle vivait pourtant dans le panneau « Nouveau
+	# monde » : cache, vide par defaut, ce panneau n'offrait aucun moyen de
+	# choisir le monde qu'on ouvre.
+	#
+	# L'indice sur l'adresse descend just' apres « Héberger » : il parle de
+	# rejoindre, et il se lisait plus haut, a trois elements de son champ.
+	_net_seed_field = UiKit.mc_field("Graine de la partie (vide = aléatoire)")
+	_net_seed_field.custom_minimum_size = BUTTON_SIZE
+	_net_box.add_child(_net_seed_field)
 
 	var host := UiKit.mc_primary_button("Héberger une partie")
 	host.custom_minimum_size = BUTTON_SIZE
 	host.pressed.connect(_on_host)
 	_net_box.add_child(host)
+
+	_net_box.add_child(hint)
 
 	# Adresse et port sur une meme ligne : deux champs empiles mangeraient la
 	# moitie de la carte pour deux valeurs qu'on ne remplit qu'une fois.
@@ -1444,7 +1486,7 @@ func _build_net_panel() -> void:
 
 	var back := UiKit.mc_button("Retour")
 	back.custom_minimum_size = BUTTON_SIZE
-	back.pressed.connect(_show_main_panel)
+	back.pressed.connect(go_back)
 	_net_box.add_child(back)
 
 
@@ -1560,11 +1602,55 @@ func _clear_pending() -> void:
 		_worlds_box.cancel_pending()
 
 
+## Affiche un panneau en empilant celui qu'il remplace, pour que « Retour » et
+## Echap remontent d'un cran. `push` vaut faux quand on redescend la pile : le
+## panneau que l'on retrouve ne doit pas se pousser lui-meme, sinon « Retour »
+## oscillerait entre deux etages.
+func _open_panel(box: VBoxContainer, push: bool = true) -> void:
+	if push:
+		var leaving := _panel_open()
+		if leaving != _main_box and leaving != box:
+			_panel_stack.append(leaving)
+	_show_only(box)
+	_fade_in(box)
+
+
+## Un cran en arriere, jusqu'au panneau d'ou l'on venait — et non jusqu'au menu
+## principal. « Nouveau monde » ouvert depuis « Mes mondes » rend a « Mes
+## mondes » : le retour par defaut jetait la liste et sa position de defilement,
+## et le joueur perdait le monde qu'il etait en train de chercher.
+##
+## La pile ne descend jamais sous le menu principal, qui en est la racine. A son
+## sommet, « Retour » repose le curseur sur « Jouer ».
+func go_back() -> void:
+	if _panel_stack.is_empty():
+		_show_main_panel()
+		return
+	var target := _panel_stack.pop_back() as VBoxContainer
+	if target == null:
+		_show_main_panel()
+		return
+	_clear_pending()
+	_open_panel(target, false)
+	# Un panneau qui lit le disque se recharge : une partie a pu etre creee ou
+	# effacee pendant le detour.
+	if target == _worlds_box:
+		_worlds_box.refresh()
+	elif target == _options_box:
+		_options_box.refresh()
+	if target == _main_box:
+		if _play_button != null:
+			_play_button.grab_focus()
+	else:
+		_focus_first(target)
+
+
 func _show_main_panel() -> void:
 	_clear_pending()
 	_pending_slot = 0
-	_show_only(_main_box)
-	_fade_in(_main_box)
+	_panel_stack.clear()
+	_open_panel(_main_box, false)
+	_update_play_slot()
 	# Le focus suit le panneau : au clavier comme a la manette, on ne reste pas
 	# sur un bouton devenu invisible, ou la touche Entree ne ferait plus rien de
 	# lisible.
@@ -1574,8 +1660,7 @@ func _show_main_panel() -> void:
 
 func _show_new_panel() -> void:
 	_clear_pending()
-	_show_only(_new_box)
-	_fade_in(_new_box)
+	_open_panel(_new_box)
 	_show_new_panel_target()
 
 
@@ -1590,10 +1675,9 @@ func _show_new_panel_target() -> void:
 
 func _show_net_panel() -> void:
 	_clear_pending()
-	_show_only(_net_box)
+	_open_panel(_net_box)
 	if _local_ip_label != null:
 		_local_ip_label.text = "Ton adresse : %s" % local_address()
-	_fade_in(_net_box)
 	if _address_field != null:
 		_address_field.grab_focus()
 
@@ -1603,8 +1687,7 @@ func _show_net_panel() -> void:
 ## perimee ferait douter du regle plutot que du menu.
 func _show_options_panel() -> void:
 	_clear_pending()
-	_show_only(_options_box)
-	_fade_in(_options_box)
+	_open_panel(_options_box)
 	_options_box.refresh()
 	_focus_first(_options_box)
 
@@ -1612,8 +1695,7 @@ func _show_options_panel() -> void:
 ## Le panneau des mondes aussi se recharge : une partie peut avoir ete
 ## sauvegardee en pause juste avant de revenir au titre.
 func _show_worlds_panel() -> void:
-	_show_only(_worlds_box)
-	_fade_in(_worlds_box)
+	_open_panel(_worlds_box)
 	_worlds_box.refresh()
 	_focus_first(_worlds_box)
 
@@ -1646,37 +1728,45 @@ func _fade_in(box: Control) -> void:
 	tween.tween_property(box, "modulate:a", 1.0, 0.18)
 
 
-## Echap ferme le panneau ouvert et ramene au menu principal : c'est le seul
-## retour possible depuis le titre, et il est attendu partout. Sur le panneau
-## principal, Echap ne fait rien — quitter le jeu sur une touche reflexe serait
+## Echap remonte d'un cran et ramene au menu principal au sommet. Il ne fait
+## rien sur le panneau principal : quitter le jeu sur une touche reflexe serait
 ## une mauvaise surprise.
 ##
 ## Le premier Echap ne fait que rendre le focus au menu : un champ de saisie
 ## garde la touche pour lui, et le panneau ne disparaitrait pas sous le joueur
-## au moment ou il tape sa graine.
+## au moment ou il tape. Cela vaut pour **tous** les champs, nom et port
+## compris : un seul oublie ici suffisait a ce qu'Echap ferme le panneau et
+## jette le texte que le joueur venait d'ecrire.
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible or not event.is_action_pressed("pause"):
 		return
 	# Un champ de saisie a la priorite : c'est lui qui utilise Echap pour
 	# s'effacer, et lui retirer le focus se cacherait derriere un panneau entier.
-	if _seed_field != null and _seed_field.has_focus():
-		_seed_field.release_focus()
-		get_viewport().set_input_as_handled()
-		return
-	if _address_field != null and _address_field.has_focus():
-		_address_field.release_focus()
-		get_viewport().set_input_as_handled()
-		return
-	if _panel_open() != _main_box:
-		_show_main_panel()
-		get_viewport().set_input_as_handled()
-		return
-	# Sur « Mes mondes », Echap annule d'abord une suppression en attente. Le
-	# joueur qui a arme la confirmation par reflexe ne doit pas se retrouver
-	# sur le panneau principal avec la suppression toujours en attente.
+	for field in _text_fields():
+		if field != null and field.has_focus():
+			field.release_focus()
+			get_viewport().set_input_as_handled()
+			return
+	# Une suppression en attente annule le retour : le joueur qui a arme la
+	# confirmation par reflexe ne doit pas se retrouver sur le panneau
+	# precedent avec la suppression toujours armee. Ce test passe AVANT la
+	# navigation, car apres il ne serait jamais atteint — le panneau courant
+	# part toujours avant lui.
 	if _pending_delete_armed():
 		_clear_pending()
 		get_viewport().set_input_as_handled()
+		return
+	if _panel_open() != _main_box:
+		go_back()
+		get_viewport().set_input_as_handled()
+
+
+## Les champs de saisie de l'ecran. Echap les relache l'un apres l'autre, et la
+## liste sert donc aussi d'inventaire : un champ ajoute plus tard est couvert
+## sans qu'on ait a y penser. C'est exactement l'oubli qu'il y avait sur le nom
+## du monde et sur le port, testes a cote des deux autres.
+func _text_fields() -> Array:
+	return [_name_field, _seed_field, _net_seed_field, _address_field, _port_field]
 
 
 ## Le panneau ouvert, ou le panneau principal si aucun ne l'est.
@@ -1702,12 +1792,14 @@ func _pending_delete_armed() -> bool:
 ## n'ont rien a quoi s'appliquer tant qu'aucune partie ne tourne : ils sont dans
 ## `Settings`, et `Main` les lit au lancement de la suivante.
 func _on_setting_changed(key: String, new_value: Variant) -> void:
+	# L'absence du lecteur de sons ne concerne que les reglages de son. Le
+	# garde etait devant tout le reste, et coupait court — sans un mot — a des
+	# reglages qui n'ont rien a y faire, dont la portee de rendu et l'echelle
+	# d'interface.
 	var sounds := _sounds_node()
-	if sounds == null:
-		return
-	if key == "music":
+	if key == "music" and sounds != null:
 		sounds.set_music_scale(float(new_value))
-	elif key == "sfx":
+	elif key == "sfx" and sounds != null:
 		sounds.set_sfx_scale(float(new_value))
 	elif key == "render_distance":
 		# La portee du panneau « Nouveau monde » et celle du reglage sont le meme
@@ -1715,13 +1807,48 @@ func _on_setting_changed(key: String, new_value: Variant) -> void:
 		# reglage, dont une qu'on ne pourrait plus comprendre.
 		_distance = clampi(int(new_value), 2, 14)
 		_update_distance()
+	elif key == "ui_scale":
+		apply_ui_scale()
+
+
+## Applique l'echelle d'interface a la fenetre, et republie la valeur reellement
+## retenue dans les reglages.
+##
+## L'echelle agrandit aussi la taille minimale de la fenetre, et c'est la que
+## le plafond de l'ecran compte : sur un ecran de 1366x768, 150 % demanderait
+## 1320x930 px — la fenetre ne pourrait plus etre reduite, et le joueur ne
+## pourrait plus revenir a 100 % parce qu'il n'aurait plus la place d'afficher
+## le panneau ou le reglage se trouve. La valeur demandee est donc ramenee a ce
+## que l'ecran supporte, puis ecriture : le menu doit montrer ce qui est vrai,
+## pas ce qui a ete demande.
+func apply_ui_scale() -> float:
+	var fitted := UiKit.apply_ui_scale(get_window(), float(Settings.value("ui_scale")))
+	if not is_equal_approx(fitted, float(Settings.value("ui_scale"))):
+		Settings.set_value("ui_scale", fitted)
+		if _options_box != null:
+			# Le panneau doit relire sa ligne : la valeur qu'il affiche vient
+			# d'etre remplacee par celle que l'ecran a bien acceptee.
+			_options_box.refresh()
+	return fitted
 
 ## Lance l'hote. La graine est celle du champ du panneau « Nouveau monde » : on
 ## joue sur le meme monde que la partie solo, et l'utilisateur peut ainsi
 ## retrouver la region qu'il a exploree.
 func _on_host() -> void:
 	show_message("")
-	host_requested.emit(parse_seed(_seed_field.text), _distance)
+	host_requested.emit(parse_seed(_net_seed_field.text), _distance)
+
+
+## « Jouer » ecrit dans le premier emplacement libre. Quand il n'en reste aucun,
+## la partie partirait quand meme et sa premiere sauvegarde ecraserait le dernier
+## monde du joueur : on n'y va pas, et on ouvre « Mes mondes » ou une place peut
+## se liberer. Le libelle sous le bouton annonce deja la cible, donc ce detour
+## n'est pas une devinette.
+func _on_play_pressed() -> void:
+	if SaveSystem.next_free_slot() <= 0:
+		_show_worlds_panel()
+		return
+	play_requested.emit(randi(), _distance)
 
 
 func _on_join() -> void:
@@ -1776,6 +1903,23 @@ func _update_distance() -> void:
 	_distance_label.text = "Portée : %d" % _distance
 
 
+## Ou « Jouer » va ecrire, et ce qu'il reste. Un bouton qui enregistre sans le
+## dire est un piege : le joueur ignore qu'il occupe l'un des six emplacements,
+## et n'a aucun moyen de deviner qu'il en reste. La ligne vire a l'avertissement
+## des que la derniere place est prise.
+func _update_play_slot() -> void:
+	if _play_slot_label == null:
+		return
+	var target := SaveSystem.next_free_slot()
+	if target <= 0:
+		_play_slot_label.text = "Aucun emplacement libre — effacez-en un"
+		_play_slot_label.add_theme_color_override("font_color", Color(0.98, 0.66, 0.42))
+		return
+	_play_slot_label.text = "Sauvegarde dans l'emplacement %d/%d" % [
+		target, SaveSystem.SLOT_COUNT]
+	_play_slot_label.add_theme_color_override("font_color", HINT_COLOR)
+
+
 # ----------------------------------------------------------------------- reseau
 
 ## Adresse IPv4 de la machine, telle qu'un autre joueur doit la saisir. Sur un
@@ -1806,6 +1950,9 @@ static func _net_node() -> Node:
 ## Renvoie false si le nom n'existe pas, plutot que de lever une erreur : un typo
 ## dans la commande de diagnostic ne doit pas planter le jeu.
 func show_panel(panel: String) -> bool:
+	# Chaque capture part du menu principal : la pile se vide, sinon la vue
+	# depends de l'ordre dans lequel les panneaux ont ete photographies.
+	_panel_stack.clear()
 	match panel:
 		"main":
 			_show_main_panel()
@@ -1830,6 +1977,9 @@ func refresh_panels() -> void:
 		_options_box.refresh()
 	if _worlds_box != null:
 		_worlds_box.refresh()
+	# Un emplacement vient peut-etre d'etre libere : la ligne de « Jouer » doit
+	# le dire, sans quoi elle continuerait d'avertir alors qu'une place existe.
+	_update_play_slot()
 
 
 func has_preview() -> bool:

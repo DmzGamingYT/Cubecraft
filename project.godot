@@ -30,6 +30,12 @@ Net="*res://scripts/net/Net.gd"
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
+; Plancher statique, a 100 % d'echelle. L'echelle d'interface releve ce
+; plancher a chaque changement : le minimum reel vaut `UiKit.MIN_WINDOW`
+; multiplie par l'echelle, parce qu'agrandir l'interface agrandit aussi ce que
+; la fenetre doit pouvoir contenir.
+window/size/window_min_width=880
+window/size/window_min_height=620
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 

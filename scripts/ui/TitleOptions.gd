@@ -27,7 +27,12 @@ const ROW_WIDTH := 340.0
 
 ## Texte d'un reglage, dans l'ordre d'affichage. Un reglages par ligne, donc
 ## l'ordre du tableau EST l'ordre a l'ecran.
+##
+## La taille de l'interface ouvre la liste : c'est le seul reglage qui change la
+## maniere dont on LIT tous les autres, et un joueur qui la cherche doit la
+## trouver avant d'avoir a decroiser une colonne.
 const ROWS := [
+	{"key": "ui_scale", "title": "Taille de l'interface"},
 	{"key": "music", "title": "Musique"},
 	{"key": "sfx", "title": "Bruitages"},
 	{"key": "fov", "title": "Champ de vision"},
@@ -40,7 +45,7 @@ var _rows: Dictionary = {}
 
 
 func _init() -> void:
-	# Separation resserree : sept lignes de 36 px dans une carte de 450 ne
+	# Separation resserree : huit lignes de 36 px dans une carte de 450 ne
 	# laissent pas la place d'un espacement de 6 px entre chacune.
 	add_theme_constant_override("separation", 4)
 	size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -80,14 +85,26 @@ func _build() -> void:
 	add_child(hint)
 
 	var reset := UiKit.mc_button("Réinitialiser")
-	reset.custom_minimum_size = Vector2(ROW_WIDTH, 38.0)
+	reset.custom_minimum_size = Vector2((ROW_WIDTH - 8.0) * 0.5, 38.0)
+	reset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	reset.pressed.connect(_on_reset)
-	add_child(reset)
 
 	var back := UiKit.mc_button("Retour")
-	back.custom_minimum_size = Vector2(ROW_WIDTH, 38.0)
+	back.custom_minimum_size = Vector2((ROW_WIDTH - 8.0) * 0.5, 38.0)
+	back.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	back.pressed.connect(func(): back_requested.emit())
-	add_child(back)
+
+	# Les deux boutons sur une meme ligne. Empiles, ils prenaient 42 px de plus —
+	# exactement ce que demande la ligne de taille d'interface, dans une carte
+	# dimensionnee au pixel pres. Retaillir un reglage existant pour en
+	# ajouter un nouveau n'etait pas une option : la carte garde sa hauteur pour
+	# que le menu ne saute pas d'un panneau a l'autre, et c'est sa taille qui
+	# commande celle de tout l'ecran.
+	var actions := HBoxContainer.new()
+	actions.add_theme_constant_override("separation", 8)
+	actions.add_child(reset)
+	actions.add_child(back)
+	add_child(actions)
 
 
 func _add_stepper(key: String, title: String) -> void:
@@ -178,6 +195,12 @@ func _write_row(key: String) -> void:
 func _write_value(value_label: Label, key: String, current: Variant) -> void:
 	if key == "music" or key == "sfx":
 		value_label.text = "%d %%" % int(round(float(current) * 100.0))
+	elif key == "ui_scale":
+		# L'ecran peut interdire un palier : le « + » cesse alors de bouger et
+		# rien ne l'expliquerait. Le suffixe le dit sur la ligne meme, ce qui
+		# evite une ligne d'aide de plus dans une carte deja pleine.
+		var cap := "" if _scale_fits(current) else " max"
+		value_label.text = "%d%%%s" % [int(round(float(current) * 100.0)), cap]
 	elif key == "fov":
 		value_label.text = "%d°" % int(round(float(current)))
 	elif key == "sensitivity":
@@ -188,6 +211,18 @@ func _write_value(value_label: Label, key: String, current: Variant) -> void:
 		value_label.text = "%d chunks" % int(current)
 	elif key == "shader":
 		value_label.text = _shader_name(int(current))
+
+
+## L'echelle demande tient-elle sur l'ecran du joueur ?
+##
+## Renvoie toujours vrai sans fenetre : le moteur y rapporte un ecran vide, que
+## `fit_ui_scale` lit comme « aucune contrainte ». Le test et la capture d'ecran
+## doivent donc afficher un pourcentage nu, et non un avertissement permanent qui
+## n'expliquerait rien au joueur.
+func _scale_fits(current: Variant) -> bool:
+	return is_equal_approx(
+		UiKit.fit_ui_scale(float(current), UiKit.screen_size(get_window())),
+		float(current))
 
 
 ## Nom du mode de rendu. Le mode est un cyle : le reglage est borne par le

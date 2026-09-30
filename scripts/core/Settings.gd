@@ -2,7 +2,7 @@ class_name Settings
 extends RefCounted
 
 ## Reglages persistants du joueur : volumes, portee, champ de vision, sensibilite,
-## post-traitement.
+## post-traitement, echelle d'interface.
 ##
 ## Tout est statique, sans autoload : le menu des reglages, le joueur et le
 ## generateur de sons ont besoin des MEMES valeurs, et le test de fumee instancie
@@ -26,6 +26,7 @@ const FORMAT_VERSION := 1
 const DEFAULTS := {
 	"music": 0.65,
 	"sfx": 0.90,
+	"ui_scale": 1.0,
 	"render_distance": 5,
 	"fov": 75.0,
 	"sensitivity": 0.0022,
@@ -40,6 +41,7 @@ const DEFAULTS := {
 const LIMITS := {
 	"music": [0.0, 1.0],
 	"sfx": [0.0, 1.0],
+	"ui_scale": [0.75, 2.0],
 	"render_distance": [2, 14],
 	"fov": [55.0, 100.0],
 	"sensitivity": [0.0004, 0.0080],
@@ -52,6 +54,7 @@ const LIMITS := {
 const STEPS := {
 	"music": 0.05,
 	"sfx": 0.05,
+	"ui_scale": 0.25,
 	"render_distance": 1.0,
 	"fov": 1.0,
 	"sensitivity": 0.0002,
