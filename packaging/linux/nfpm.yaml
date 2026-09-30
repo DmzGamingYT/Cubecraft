@@ -1,0 +1,59 @@
+# Paquet Debian de Cubecraft, construit par nfpm (libre, https://nfpm.goreleaser.com).
+#
+# Le jeu n'appartient a aucune distribution : il va donc dans /opt, comme
+# Minecraft sous Linux, et non dans /usr/bin. Un fichier pose dans /usr/bin
+# disparaitrait a la premiere mise a jour du systeme, puisque dpkg ne connait
+# aucun paquet qui l'a installe.
+#
+# Ce que le `.deb` apporte de plus que le binaire nu : une entree de menu
+# (l'icone du jeu apparait dans le lanceur), une icone de bonne taille dans
+# le dossier d'icones du systeme, et un lanceur `cubecraft` dans le PATH.
+# C'est ce qui fait ressembler le jeu a un logiciel installe plutot qu'a un
+# fichier telecharge.
+name: cubecraft
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: games
+priority: optional
+maintainer: DmzGamingYT
+vendor: Cubecraft
+homepage: https://github.com/DmzGamingYT/Cubecraft
+license: MIT
+description: |
+  Un clone de Minecraft en voxel, entierement procedural.
+
+  Le terrain, les textures, les sons, les arbres et les grottes sont tous
+  calcules par le code au demarrage : le depot ne contient aucun asset de jeu.
+depends:
+  - libgl1
+  - libxcursor1
+  - libxinerama1
+  - libxi6
+  - libxrandr2
+  - libasound2
+  - libvulkan1
+contents:
+  - src: build/linux/Cubecraft.x86_64
+    dst: /opt/cubecraft/Cubecraft.x86_64
+    file_info:
+      mode: 0755
+  - src: packaging/linux/launcher.sh
+    dst: /usr/bin/cubecraft
+    file_info:
+      mode: 0755
+  - src: packaging/linux/cubecraft.desktop
+    dst: /usr/share/applications/cubecraft.desktop
+  - src: assets/icons/cubecraft-512.png
+    dst: /usr/share/icons/hicolor/512x512/apps/cubecraft.png
+  - src: assets/icons/cubecraft-256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/cubecraft.png
+  - src: assets/icons/cubecraft-128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/cubecraft.png
+  - src: LICENSE
+    dst: /usr/share/doc/cubecraft/copyright
+overrides:
+  deb:
+    scripts:
+      postinstall: packaging/linux/postinst.sh
+      preremove: packaging/linux/prerm.sh

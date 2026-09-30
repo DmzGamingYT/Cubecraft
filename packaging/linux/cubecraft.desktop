@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Cubecraft
+GenericName=Jeu en voxels
+Comment=Un clone de Minecraft en voxel, entierement procedural
+Exec=cubecraft
+Icon=cubecraft
+Terminal=false
+Categories=Game;BlocksGame;
+Keywords=minecraft;voxel;cube;sandbox;construction;
+StartupNotify=true
+StartupWMClass=Cubecraft

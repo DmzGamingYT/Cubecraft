@@ -1,0 +1,381 @@
+# Construit les trois plateformes au moment du tag, puis publie une release.
+#
+# Pourquoi une CI plutot qu'un build sur la machine de l'auteur :
+#
+# - L'export Windows demande le moteur et ses templates ; c'est fait ici sur
+#   un runner Windows, donc avec les binaires Windows. Inversement, l'export
+#   macOS a besoin de `codesign` et de `hdiutil`, qui n'existent que sur macOS.
+#   Aucun runner ne peut donc produire les trois, ni celui d'un seul.
+#
+# - L'installeur Windows (Inno Setup) est un programme Windows : il ne peut
+#   etre compile que sur un runner Windows.
+#
+# - Le `.dmg` soigne a besoin de `create-dmg` et de Pillow, donc d'un runner
+#   macOS.
+#
+# - Un binaire produit a partir d'une copie de travail non propre ne
+#   correspond a aucun commit. Ici, chaque artefact vient du tag exact, donc
+#   `git describe` dit vrai sur ce qu'un utilisateur a installe.
+#
+# Le tag declenche tout : `git tag v1.1.0 && git push origin v1.1.0`.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag a construire (ex: v1.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  # Doit correspondre a la version du moteur qui a produit les binaires
+  # deja publies. L'etape "Verifie la version" echoue bruyamment si l'une
+  # des deux derive, plutot que de publier un jeu compile avec un autre
+  # moteur que celui annonce dans le README.
+  GODOT_VERSION: "4.7.2"
+
+jobs:
+  macos:
+    name: macOS - .dmg
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Retrouve la version du tag
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Installe Godot
+        run: |
+          set -euo pipefail
+          url="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+          curl -fsSL -o godot.zip "$url"
+          unzip -q godot.zip
+          mv "Godot.app/Contents/MacOS/Godot" /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+          godot --headless --version
+
+      - name: Verifie la version
+        run: |
+          set -euo pipefail
+          attendu="${GODOT_VERSION}.stable.official"
+          obtenu="$(godot --headless --version)"
+          echo "attendu : $attendu"
+          echo "obtenu  : $obtenu"
+          case "$obtenu" in
+            "$attendu"*) echo "version conforme" ;;
+            *) echo "::error::le moteur est $obtenu, GODOT_VERSION annonce $attendu"; exit 1 ;;
+          esac
+
+      - name: Installe les templates d'export
+        run: |
+          set -euo pipefail
+          url="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          curl -fsSL -o templates.tpz "$url"
+          dest="$HOME/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$dest"
+          # `-j` supprime le prefixe `templates/` : Godot veut les fichiers
+          # a la racine du dossier de version, pas dans un sous-dossier.
+          unzip -j -q -o templates.tpz \
+            "templates/macos.zip" \
+            "templates/windows_release_x86_64.exe" \
+            "templates/linux_release.x86_64" \
+            "templates/linux_release.arm64" \
+            "templates/version.txt" \
+            -d "$dest"
+          ls -la "$dest"
+
+      - name: Importe le projet
+        run: godot --headless --import
+
+      - name: Fabrique les icones
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --upgrade pillow
+          python3 packaging/make_icons.py
+
+      - name: Exporte le .app
+        run: |
+          set -euo pipefail
+          mkdir -p build/macos
+          godot --headless --export-release "macOS" build/macos/Cubecraft.zip
+          test -f build/macos/Cubecraft.zip
+
+      - name: Construit le .dmg
+        run: |
+          set -euo pipefail
+          brew install create-dmg
+          python3 packaging/make_dmg.py \
+            build/macos/Cubecraft.zip \
+            "build/macos/Cubecraft-${{ steps.ver.outputs.version }}.dmg" \
+            build/macos
+          # La signature ad-hoc de Godot tient mal a travers la fabrication du
+          # disque : on la refait, sinon macOS refuse d'ouvrir l'app.
+          hdiutil detach /Volumes/Cubecraft -quiet 2>/dev/null || true
+          codesign --verify --deep --strict "build/macos/dmg/Cubecraft.app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            build/macos/Cubecraft-${{ steps.ver.outputs.version }}.dmg
+            build/macos/Cubecraft.zip
+          if-no-files-found: error
+
+  windows:
+    name: Windows - installeur Inno Setup
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Retrouve la version du tag
+        id: ver
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $tag = "${{ inputs.tag }}"
+          } else {
+            $tag = "${{ github.ref_name }}"
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$($tag -replace '^v','')" >> $env:GITHUB_OUTPUT
+
+      - name: Installe Godot
+        shell: pwsh
+        run: |
+          $url = "https://github.com/godotengine/godot-builds/releases/download/$env:GODOT_VERSION-stable/Godot_v$env:GODOT_VERSION-stable_win64.exe.zip"
+          Invoke-WebRequest -Uri $url -OutFile godot.zip
+          Expand-Archive godot.zip -DestinationPath .
+          $godot = (Get-ChildItem -Filter "Godot_v*.exe" | Select-Object -First 1).FullName
+          Move-Item $godot "$env:RUNNER_TEMP\godot.exe" -Force
+
+      - name: Verifie la version
+        shell: pwsh
+        run: |
+          $obtenu = & "$env:RUNNER_TEMP\godot.exe" --headless --version
+          Write-Host "obtenu : $obtenu"
+          if (-not $obtenu.StartsWith("$env:GODOT_VERSION.stable")) {
+            Write-Host "::error::le moteur ne correspond pas a GODOT_VERSION=$env:GODOT_VERSION"
+            exit 1
+          }
+
+      - name: Installe les templates d'export
+        shell: pwsh
+        run: |
+          $url = "https://github.com/godotengine/godot-builds/releases/download/$env:GODOT_VERSION-stable/Godot_v$env:GODOT_VERSION-stable_export_templates.tpz"
+          Invoke-WebRequest -Uri $url -OutFile templates.tpz
+          $dest = "$env:APPDATA\Godot\export_templates\$env:GODOT_VERSION.stable"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          # Le .tpz est un zip dont les membres sont prefixes par `templates/`.
+          # Godot les cherche a la racine du dossier de version.
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path templates.tpz))
+          $wanted = @("macos.zip", "windows_release_x86_64.exe", "linux_release.x86_64",
+                      "linux_release.arm64", "version.txt")
+          foreach ($entry in $zip.Entries) {
+            $name = $entry.Name
+            if ($wanted -contains $name) {
+              [System.IO.Compression.ZipFileExtensions]::ExtractToFile(
+                $entry, (Join-Path $dest $name), $true)
+            }
+          }
+          $zip.Dispose()
+          Get-ChildItem $dest
+
+      - name: Importe le projet
+        shell: pwsh
+        # Le `&` de PowerShell ne peut pas commencer la valeur de `run` :
+        # YAML y voit une ancre (`&nom`) et refuse le fichier. D'ou le bloc.
+        run: |
+          & "$env:RUNNER_TEMP\godot.exe" --headless --import
+
+      - name: Exporte le .exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build/windows | Out-Null
+          & "$env:RUNNER_TEMP\godot.exe" --headless --export-release "Windows Desktop" build/windows/Cubecraft.exe
+          if (-not (Test-Path build/windows/Cubecraft.exe)) { throw "export vide" }
+
+      - name: Fabrique les icones
+        shell: pwsh
+        run: |
+          python -m pip install --quiet --upgrade pillow
+          python packaging/make_icons.py
+
+      - name: Compile l'installeur
+        shell: pwsh
+        run: |
+          # ISCC est installe avec Inno Setup, qui est deja present sur
+          # l'image windows-latest. C'est la seule etape qui ne peut pas
+          # tourner ailleurs : c'est un programme Windows.
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe introuvable a $iscc" }
+          & $iscc "/DVer=${{ steps.ver.outputs.version }}" "packaging\installer.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC a echoue" }
+          Get-ChildItem build/windows
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            build/windows/Cubecraft-Setup-*.exe
+            build/windows/Cubecraft.exe
+          if-no-files-found: error
+
+  linux:
+    name: Linux - .deb et zip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Retrouve la version du tag
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Installe Godot
+        run: |
+          set -euo pipefail
+          url="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          curl -fsSL -o godot.zip "$url"
+          unzip -q godot.zip
+          mv Godot_v${GODOT_VERSION}-stable_linux.x86_64 /usr/local/bin/godot
+          chmod +x /usr/local/bin/godot
+          godot --headless --version
+
+      - name: Verifie la version
+        run: |
+          set -euo pipefail
+          attendu="${GODOT_VERSION}.stable.official"
+          obtenu="$(godot --headless --version)"
+          echo "obtenu : $obtenu"
+          case "$obtenu" in
+            "$attendu"*) echo "version conforme" ;;
+            *) echo "::error::le moteur est $obtenu, GODOT_VERSION annonce $attendu"; exit 1 ;;
+          esac
+
+      - name: Installe les templates d'export
+        run: |
+          set -euo pipefail
+          url="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          curl -fsSL -o templates.tpz "$url"
+          dest="$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$dest"
+          unzip -j -q -o templates.tpz \
+            "templates/macos.zip" \
+            "templates/windows_release_x86_64.exe" \
+            "templates/linux_release.x86_64" \
+            "templates/linux_release.arm64" \
+            "templates/version.txt" \
+            -d "$dest"
+          ls -la "$dest"
+
+      - name: Importe le projet
+        run: godot --headless --import
+
+      - name: Fabrique les icones
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet --upgrade pillow
+          python3 packaging/make_icons.py
+
+      - name: Exporte les binaires
+        run: |
+          set -euo pipefail
+          mkdir -p build/linux build/linux-arm64
+          godot --headless --export-release "Linux" build/linux/Cubecraft.x86_64
+          godot --headless --export-release "Linux ARM64" build/linux-arm64/Cubecraft.aarch64
+
+      - name: Construit le .deb
+        run: |
+          set -euo pipefail
+          curl -fsSL -o nfpm.tar.gz \
+            https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz
+          tar -xzf nfpm.tar.gz nfpm
+          install -m 0755 nfpm /usr/local/bin/nfpm
+          chmod +x packaging/linux/*.sh
+          VERSION="${{ steps.ver.outputs.version }}" \
+            nfpm package --config packaging/linux/nfpm.yaml --packager deb \
+              --target "build/linux/cubecraft_${GITHUB_REF_NAME#v}_amd64.deb"
+          dpkg-deb -I "build/linux/cubecraft_${GITHUB_REF_NAME#v}_amd64.deb"
+
+      - name: Archive le binaire nu
+        run: |
+          set -euo pipefail
+          # Le zip garde le bit d'execution, qu'un telechargement en direct
+          # ne preserve pas toujours. Il reste donc aussi disponible pour
+          # qui ne veut pas installer de paquet.
+          chmod +x build/linux/Cubecraft.x86_64
+          (cd build/linux && zip -9 -q "cubecraft-linux-${{ steps.ver.outputs.version }}.zip" Cubecraft.x86_64)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: |
+            build/linux/cubecraft_*_amd64.deb
+            build/linux/cubecraft-linux-*.zip
+            build/linux-arm64/Cubecraft.aarch64
+          if-no-files-found: error
+
+  release:
+    name: Publie la release
+    needs: [macos, windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Assemble et verifie
+        run: |
+          set -euo pipefail
+          find dist -type f | sort
+          # Aucun artefact ne doit etre vide : un export rate laisse parfois
+          # un fichier de quelques octets, qui passerait le telechargement
+          # pourechouer bien plus tard, chez l'utilisateur.
+          vide=$(find dist -type f -size -1M | head -1 || true)
+          if [ -n "$vide" ]; then
+            echo "::error::artefact trop petit, l'export a probablement echoue : $vide"
+            exit 1
+          fi
+
+      - name: Publie
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Une release deja publiee n'est pas recreee : relancer le
+          # workflow sur le meme tag doit seulement remplacer les fichiers.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" $(find dist -type f \( -name "*.dmg" -o -name "*.exe" -o -name "*.deb" -o -name "*.zip" -o -name "*.aarch64" \) ! -name "Cubecraft.zip") --clobber
+            echo "::notice::assets remplaces sur la release existante $TAG"
+          else
+            gh release create "$TAG" \
+              --title "Cubecraft $TAG" \
+              --generate-notes \
+              $(find dist -type f \( -name "*.dmg" -o -name "*.exe" -o -name "*.deb" -o -name "*.zip" -o -name "*.aarch64" \) ! -name "Cubecraft.zip")
+            echo "::notice::release $TAG creee"
+          fi
