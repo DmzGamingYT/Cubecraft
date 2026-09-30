@@ -13,6 +13,8 @@
   <img alt="GDScript" src="https://img.shields.io/badge/GDScript-355570">
   &nbsp;
   <img alt="multijoueur ENet, 8 joueurs" src="https://img.shields.io/badge/multijoueur-ENet%20%C2%B7%208%20joueurs-4c8c4c">
+  &nbsp;
+  <img alt="Licence MIT" src="https://img.shields.io/badge/licence-MIT-355570">
 </p>
 
 Un jeu de type Minecraft en voxel, écrit en GDScript pour **Godot 4.7**, et
@@ -74,7 +76,7 @@ godot --pauseshot                      # capture pause et inventaire (2 PNG)
 godot --titletest                      # idem, 5 PNG (voir plus bas)
 godot --debugshot                      # capture le menu de debug (F4)
 godot --debugrun                       # lance les verifications par le menu
-godot --uitest                         # 86 verifications d'interface
+godot --uitest                         # 93 verifications d'interface
 ```
 
 Les cinq modes de capture exigent une fenetre : en `--headless`,
@@ -105,7 +107,7 @@ capture pas au hasard.
 | `Ctrl` | s'accroupir / descendre en vol |
 | `F` | activer le vol |
 | Clic gauche (maintenu) | miner |
-| Clic droit | poser un bloc — ouvrir l'établi si on le vise |
+| Clic droit | poser un bloc — ouvrir l'établi ou la table d'enchantement si on les vise |
 | Clic molette | prendre le bloc visé |
 | `1`…`9`, molette | changer d'emplacement |
 | `E` | inventaire (fabrication 2×2) |
@@ -140,6 +142,13 @@ Le jeu se joue à la manette, sans réglage : la correspondance est dans
 Une manette branchée est signalée en bas à droite de l'écran de lancement.
 La navigation des menus passe par le focus : la croix déplace le rectangle
 jaune, `A` valide, `B` ou `Start` revient en arrière.
+
+Souris et stick se marchent dessus s'ils tournent en même temps. Celui qui
+n'a pas bougé depuis le dernier clichage cède la main : **la souris garde
+le regard pendant 250 ms après chaque mouvement**, puis le stick droit
+reprend. Ce quart de seconde compte : le stick était neutralisé dès
+quand la souris était capturée — c'est-à-dire pendant toute la partie — et
+la visée à la manette n'existait en pratique que le temps d'une pause.
 
 ## Écran de lancement
 
@@ -290,7 +299,7 @@ scripts/
            Game           autoload : pause, écrans, sauvegarde, liaison scène
            InputSetup     autoload : touches, manette
            Checklist      journal de vérifications, partagé test et menu
-           Diagnostics    les 86 vérifications, jouables depuis le menu (F4)
+           Diagnostics    les 93 vérifications, jouables depuis le menu (F4)
            Net            autoload ENet : salon, admissions, diffusion
            SaveSystem     emplacements compressés dans user://, + index
            Settings       réglages persistants, bornés à la lecture
@@ -402,10 +411,37 @@ tuile : sans cela, la surface se raccordait mal d'un bloc à l'autre et la boucl
 de l'animation claquait en repartant. Les deux sont vérifiées par le test de
 fumée, parce qu'une couture dans l'eau ne dit rien à la console.
 
+**L'interaction passe avant la pose.** Le clic droit teste d'abord le bloc
+visé, et seulement ensuite la main : c'est lui qui décide. L'ordre inverse
+fermait l'établi dès que la main ne tenait pas un bloc — donc **main vide**, ou
+pioche en main. Comme la pioche en bois se fabrique avant l'établi dans la
+quasi-totalité des parties, c'était le geste le plus courant du jeu qui ne
+marchait pas, sans jamais lever une erreur. Ouvrir un établi est une
+*interaction*, pas une pose : c'est donc `_interact` qui le traite, aux côtés
+de la table d'enchantement, et la pose ne voit plus que les blocs.
+
 **Orientation des faces.** Godot n'affiche une face que si ses sommets sont dans
 le sens trigonométrique vu de l'extérieur. Inverser cet ordre rend le terrain
 entier invisible sans la moindre erreur dans la console : c'est vérifié par le
 test de fumée, qui recalcule le produit vectoriel de chaque triangle.
+
+**Le calendrier du monde ne tourne pas a chaque image.** `_schedule` balaye le
+disque autour du joueur et trie deux fois ses candidats : a la portee 5 c'est
+deux cents-accents-vingts cellules et quinze cents lectures de dictionnaire
+par image, et la portee 10 le multiplie par trois. Le balayage ne se relance
+donc que sur ce qui peut reellement changer la situation — un resultat de
+tache applique, une edition de bloc, un changement de portee, un deplacement du
+joueur — plus un filet de securite de 0,5 s, pour qu'un evenement oublie ne
+laisse pas le disque a moitie charge. Sans lui, le cout du streaming montait
+avec la portee de rendu, alors qu'il ne dependait de rien de ce que
+le joueur faisait.
+
+**Les torches déchargées quittent la liste des sources.** `World.torches` est
+l'index des blocs emissifs que `TorchLights` parcourt cinq fois par seconde.
+Elle ne se garnissait qu'a la pose, jamais au déchargement : la liste
+grossissait donc sans fin au fur et a mesure que le joueur explore, et une
+source oubliee n'etait plus rien — son chunk n'existant plus, `get_block` y
+rendait de l'air et la lumiere qu'elle detenait se mettait a eclairer le vide.
 
 **Multi-threading.** Génération et triangulation tournent sur `WorkerThreadPool`.
 Chaque tâche travaille sur une copie du volume de travail et rapporte un numéro
@@ -585,7 +621,7 @@ jeu evaluait jusqu'ici dans une console invisible.
 
 - **Informations** : graine, portée, FPS, position, chunks, torches, mémoire,
   draws, durée de session.
-- **Vérifications du jeu** : les 86 vérifications d'inventaire, de fabrication,
+- **Vérifications du jeu** : les 93 vérifications d'inventaire, de fabrication,
   de survie, de mobs, d'enchantement, de météo, puis de retour au titre et de
   relance d'une partie. Le résultat s'affiche ligne à ligne pendant l'exécution
   (vert, rouge, gris), le rapport est épinglé en haut, et la liste défile seule.
@@ -612,9 +648,9 @@ vérifications se remplissent et que la partie repart.
 
 ```bash
 godot --headless --import                    # compile tout le projet
-godot --headless --script res://tools/SmokeTest.gd   # 549 verifications
-godot --headless --uitest --distance=3       # 86 verifications d'interface
-godot --headless --script res://tools/NetTest.gd     # 67 verifications reseau
+godot --headless --script res://tools/SmokeTest.gd   # 575 verifications
+godot --headless --uitest --distance=3       # 93 verifications d'interface
+godot --headless --script res://tools/NetTest.gd     # 68 verifications reseau
 godot --headless --script res://tools/CheckContent.gd # 30 : contenu atteignable
 godot --headless --script res://tools/CheckLights.gd  # 15 : eclairage dynamique
 godot --headless --script res://tools/CheckTitle.gd   # 22 : relief du menu
@@ -682,6 +718,13 @@ pourquoi `TorchLights` prend sa cible dans un champ `follow` plutôt que de lire
 
 ## Limites connues
 
+- La vérification « le bloc visé se fend pendant le minage » est **instable** :
+  elle n'échantillonne `BreakOverlay.visible` qu'une fois par image physique,
+  et un bloc d'herbe casse à la main nue en quelques images — il arrive que le
+  bloc disparaisse avant qu'aucune image n'ait vu les fissures. Le reste de la
+  suite est déterministe. Une capture d'état dans `BreakOverlay` (l'étape de
+  progression plutôt que sa visibilité par image) la rendrait fiable.
+
 - Le multijoueur fonctionne en hôte/client sur ENet, avec un salon d'attente et
   un **chat** (`T`), mais reste minimal : pas de whitelist, pas de reprise de
   session, aucun historique — le journal du bas de l'écran fait huit lignes et
@@ -714,3 +757,14 @@ pourquoi `TorchLights` prend sa cible dans un champ `follow` plutôt que de lire
   largeur fixe (148 px) : une accroche plus longue que la zone déborde vers la
   droite — jamais sur le logo, mais le couple mot + accroche n'est alors plus
   exactement centré.
+
+## Licence
+
+Le code, les scènes, et tout ce que le jeu génère à l'exécution sont sous
+[MIT](LICENSE) — réutilisation, modification et redistribution libres, y compris
+commerciale.
+
+Une exception, en tête : le dossier `assets/kenney/` est un pack **CC0** de Kenney
+Vleugels, redéposé tel quel et également libre de toute contrainte
+([`assets/kenney/LICENSE-kenney.txt`](assets/kenney/LICENSE-kenney.txt)). Il est
+facultatif : le jeu tourne à l'identique sans lui.
