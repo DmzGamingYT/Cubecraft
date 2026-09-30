@@ -212,6 +212,20 @@ func _advance(delta: float) -> void:
 			_held[i] = NONE
 
 
+## Nombre de lumieres du pool qui eclairent reellement quelque chose.
+##
+## Les seize emplacements ne sont pas tous servis : au-dela, une source reste
+## visible mais n'eclaire pas (voir `COUNT`). Le tableau de bord compare donc
+## les torches que le monde suit de celles que le pool peut servir — un ecart
+## large est le signe qu'il faut plus de lumieres, ou moins de torches.
+func active_lights() -> int:
+	var total := 0
+	for i in COUNT:
+		if _energy[i] > 0.0:
+			total += 1
+	return total
+
+
 ## Energie cible d'une lumiere, lue sur la source qu'elle sert.
 func _target_energy(i: int) -> float:
 	var block_id := world.get_block(_held[i]) if world != null else -1

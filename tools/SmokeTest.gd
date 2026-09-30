@@ -32,6 +32,9 @@ func _initialize() -> void:
 	_test_effects()
 	_test_foliage()
 	_test_title_seed()
+	_test_focus_visibility()
+	_test_ui_scale()
+	_test_title_navigation()
 	_test_settings()
 	_test_save_slots()
 
@@ -50,6 +53,10 @@ func _initialize() -> void:
 var _world: World
 var _frames := 0
 var _phase := 0
+## Images passees dans la phase courante. Le compteur global ne suffit pas : la
+## phase 1 commence quand le monde est charge, donc son seuil peut etre deja
+## franchi en y entrant.
+var _phase_frames := 0
 var _ground := 0
 var _torch := Vector3i.ZERO
 
@@ -58,6 +65,7 @@ func _process(_delta: float) -> bool:
 	if _world == null:
 		return true
 	_frames += 1
+	_phase_frames += 1
 	_world.update(Vector3(8, 40, 8))
 
 	if _phase == 0:
@@ -67,19 +75,38 @@ func _process(_delta: float) -> bool:
 				return _finish()
 			return false
 		_phase = 1
+		_phase_frames = 0
 		_run_world_checks()
 		return false
 
 	# Laisse au mailleur le temps de reappliquer le bloc casse.
-	if _phase == 1 and _frames > 12:
+	if _phase == 1 and _phase_frames > 12:
 		_phase = 2
+		_phase_frames = 0
 		_run_remesh_checks()
 		return false
 
 	# L'interface d'inventaire ne peut pas etre testee ici : en mode --script les
 	# autoloads (Game, Atlas) n'existent pas. Ce test est joue dans le vrai jeu
 	# par `godot --uitest`, ou la logique des ecrans est reellement exercee.
-	return _finish()
+	#
+	# L'ecran titre, lui, se teste : il tolere l'absence d'autoloads, et il n'a
+	# besoin que de quelques images pour que `_ready` construise ses panneaux.
+	# Il passe donc par une phase et non par `_initialize`, ou `add_child`
+	# differe `_ready` et laisserait les panneaux encore nuls au moment de les
+	# piloter.
+	if _phase == 2 and _phase_frames > 4:
+		_phase = 3
+		_phase_frames = 0
+		_run_title_checks()
+		return false
+
+	# Les images d'attente des phases precedent la derniere rebouclent ici : sans
+	# ce test, la premiere image ou aucune condition ne s'applique suffit a
+	# boucler, et le test finit avant d'avoir rien verifie de la fin.
+	if _phase >= 3:
+		return _finish()
+	return false
 
 
 func _run_world_checks() -> void:
@@ -171,6 +198,13 @@ func _run_remesh_checks() -> void:
 ## CI, un editeur — lit un succes sur un echec. `quit(0)` ferme sur reussite.
 func _finish() -> bool:
 	print("----")
+	# Le monde a ete accroche a l'arbre pour toute la phase integration : ses
+	# chunks, leurs maillages et leurs collisions ne sont liberes que si on le
+	# retire et qu'on le detruit explicitement. `quit` ne le fait pas.
+	if _world != null:
+		root.remove_child(_world)
+		_world.free()
+		_world = null
 	if failures.is_empty():
 		print("OK : %d verifications passees." % checks)
 		quit(0)
@@ -960,6 +994,12 @@ func _test_character() -> void:
 			check(opaque == r.size.x * r.size.y,
 				"%s.%s entierement peint" % [member, face])
 
+	# Six boites, six maillages, un materiau : le corps n'est pas dans l'arbre,
+	# donc rien ne le libere a sa place. Sans cette ligne il reste six
+	# `MeshInstance3D` vivants a la sortie, et le rapport de fuite noie
+	# les vraies derriere une origine connue.
+	body.free()
+
 
 ## Les noms de membres de la skin ne sont pas les noms de pivots du corps : la
 ## table est la seule passerelle entre les deux, et le test la verifie aussi
@@ -1225,6 +1265,275 @@ func _test_title_seed() -> void:
 		"textes differents acceptes")
 	var random := TitleScreen.parse_seed("")
 	check(typeof(random) == TYPE_INT, "vide = graine aleatoire entiere")
+
+
+## Echelle d'interface et taille minimale de fenetre.
+##
+## Les deux se defendent l'un l'autre, et c'est leur lien qui est fragile :
+## agrandir l'interface agrandit aussi le minimum de la fenetre, donc une echelle
+## que l'ecran ne supporte pas condamnerait le joueur a une fenetre plus grande
+## que son bureau — qu'il ne pourrait plus reduire, ni donc plus corriger. Ces
+## verifications referment ce piege-la.
+func _test_ui_scale() -> void:
+	section("echelle d'interface")
+
+	var bas := float(Settings.LIMITS["ui_scale"][0])
+	var haut := float(Settings.LIMITS["ui_scale"][1])
+	check(Settings.has("ui_scale"), "la taille d'interface est un reglage connu")
+	check(Settings.bounded("ui_scale", 99.0) == haut, "echelle bornee en haut")
+	check(Settings.bounded("ui_scale", 0.01) == bas, "echelle bornee en bas")
+	check(Settings.bounded("ui_scale", "beaucoup") == float(Settings.DEFAULTS["ui_scale"]),
+		"echelle illisible : le defaut, pas le minimum")
+
+	var proposee := false
+	for spec in TitleOptions.ROWS:
+		if str(spec["key"]) == "ui_scale":
+			proposee = true
+	check(proposee, "le panneau des reglages propose la taille d'interface")
+
+	# Le plancher de fenetre est celui de l'ecran titre, et il suit l'echelle.
+	var base := UiKit.minimum_window_size(1.0)
+	check(base == UiKit.MIN_WINDOW, "minimum a 100 pourcent = plancher (%s)" % base)
+	var grand := UiKit.minimum_window_size(1.5)
+	check(grand.x > base.x and grand.y > base.y,
+		"interface agrandie : fenetre plus grande exigee (%s contre %s)" % [grand, base])
+	check(grand == Vector2i(roundi(UiKit.MIN_WINDOW.x * 1.5),
+		roundi(UiKit.MIN_WINDOW.y * 1.5)),
+		"le minimum suit l'echelle lineairement")
+
+	# Le cas mort : un ecran trop petit pour le palier demande. Le refus doit
+	# etre fait ICI, jamais en laissant la fenetre devenir impossible a reduire.
+	var portable := UiKit.fit_ui_scale(2.0, Vector2i(1366, 768))
+	check(portable < 2.0, "ecran 1366x768 refuse 200 pourcent (%.2f)" % portable)
+	check(portable >= bas, "et jamais sous le plancher du reglage")
+	check(UiKit.fit_ui_scale(2.0, Vector2i(320, 240)) == bas,
+		"ecran minuscule : la plus petite echelle, pas zero")
+
+	# Un ecran plus petit que le plancher ne peut pas accueillir 100 % : c'est
+	# precisement ce que sert une echelle reduite, donc il faut pouvoir descendre.
+	var petit_ecran := UiKit.fit_ui_scale(2.0, Vector2i(800, 600))
+	check(petit_ecran < 1.0,
+		"ecran 800x600 descend sous 100 pourcent (%.2f)" % petit_ecran)
+	check(petit_ecran >= bas, "mais jamais sous le plancher du reglage")
+
+	# Un ecran vide — moteur sans fenetre, tests — ne limite rien : borner sur
+	# un ecran de zero px ferait afficher au menu un « max » sans sujet.
+	var paliers: Array[float] = []
+	var pas := bas
+	while pas <= haut + 0.001:
+		paliers.append(pas)
+		pas += UiKit.UI_SCALE_STEP
+	check(paliers.size() == 6, "six paliers de 75 a 200 pourcent (%d)" % paliers.size())
+	for wanted in paliers:
+		check(UiKit.fit_ui_scale(wanted, Vector2i.ZERO) == wanted,
+			"%.2f sans ecran : rien ne borne" % wanted)
+		for screen in [Vector2i(1366, 768), Vector2i(3840, 2160), Vector2i(800, 600)]:
+			var fitted := UiKit.fit_ui_scale(wanted, screen)
+			check(fitted >= bas and fitted <= haut,
+				"%.2f sur %s reste dans les bornes (%.2f)" % [wanted, screen, fitted])
+			check(is_equal_approx(fitted / UiKit.UI_SCALE_STEP,
+				roundf(fitted / UiKit.UI_SCALE_STEP)),
+				"%.2f sur %s tombe sur un palier du reglage (%.2f)"
+				% [wanted, screen, fitted])
+			check(fitted <= wanted + 0.001,
+				"%.2f sur %s ne depasse jamais la demande" % [wanted, screen])
+
+	# Une valeur hors palier ne peut venir que d'un fichier de reglages retouche
+	# a la main : elle est honoree telle quelle plutot qu'arrondie en silence, car
+	# arrondir une echelle signifierait que l'interface change de taille sans que
+	# le joueur l'ait demande.
+	check(UiKit.fit_ui_scale(1.3, Vector2i(3840, 2160)) == 1.3,
+		"une echelle hors palier n'est pas arrondie en silence")
+
+
+## L'indicateur de focus doit se voir au moins autant que le survol, et ne pas
+## pouvoir en etre confondu.
+##
+## Les deux se distinguaient mal : le survol repeignait toute la face en bleu
+## froid, quand le focus ne changeait qu'une arete de 2 px sur une face
+## identique. A la souris c'etait net ; au clavier et a la manette, la seule
+## difference etait un demi-teinte. Ce que la verification exige n'est donc pas
+## « le focus existe » — il existait — mais « le focus bat le survol », sur la
+## seule mesure qui traverse les trois familles de boutons : la luminance de la
+## face.
+func _test_focus_visibility() -> void:
+	section("indicateur de focus des boutons")
+	# Ces controles sont fabriques **hors de l'arbre**, pour lire leurs plaques
+	# de theme sans construire d'ecran. Un `Node` hors arbre n'a personne pour le
+	# detruire : il faut donc appeler `free` soi-meme. Sans la liste ci-dessous,
+	# trois boutons, un champ de saisie et toutes leurs plaques de style
+	# survivent a la sortie du test.
+	var fabriques: Array[Control] = []
+	for family in [["bouton", UiKit.mc_button("x")],
+			["bouton principal", UiKit.mc_primary_button("x")],
+			["bouton de suppression", UiKit.mc_danger_button("x")]]:
+		var button: Button = family[1]
+		fabriques.append(button)
+		var fam := str(family[0])
+		var rest := _plate_of(button, "normal")
+		var hover := _plate_of(button, "hover")
+		var focus := _plate_of(button, "focus")
+		check(focus.bg_color.get_luminance() > rest.bg_color.get_luminance(),
+			"« %s » : focus plus clair que le repos" % fam)
+		check(focus.bg_color.get_luminance() > hover.bg_color.get_luminance(),
+			"« %s » : focus plus clair que le survol" % fam)
+		check(focus.border_width_left > rest.border_width_left,
+			"« %s » : cadre de focus plus epais que le repos" % fam)
+		check(focus.border_color != hover.border_color,
+			"« %s » : arete de focus differente de celle du survol" % fam)
+		check(button.get_theme_color("font_focus_color").get_luminance()
+			> button.get_theme_color("font_color").get_luminance(),
+			"« %s » : texte de focus plus clair que le texte de repos" % fam)
+
+	# Un champ de saisie n'a pas de survol, mais son curseur clignote : la
+	# bordure doit donc suffire a elle seule a dire qu'il est pris.
+	var field := UiKit.mc_field("graine")
+	fabriques.append(field)
+	check(_plate_of(field, "focus").border_width_left
+		> _plate_of(field, "normal").border_width_left,
+		"« champ de saisie » : bordure de focus plus epaisse que celle du repos")
+
+	# Liberation : ces controles ne sont dans aucun arbre, `queue_free` ne
+	# s'appliquerait d'ailleurs qu'a la fin de l'image, c'est-a-dire jamais ici.
+	for control in fabriques:
+		control.free()
+
+
+## La plaque d'un etat de theme. Un etat sans plaque rend une plaque vide : le
+## test qui lit alors dedans echoue sur une valeur, et non sur un plantage qui
+##rapperait a la ligne d'avant.
+func _plate_of(node: Control, state: StringName) -> StyleBoxFlat:
+	var box := node.get_theme_stylebox(state)
+	return box if box is StyleBoxFlat else StyleBoxFlat.new()
+
+
+## Regle de choix des emplacements : ce que « Jouer » peut ecrire.
+##
+## Le disque n'est ni ecrit ni efface — ces lectures ne font rien de plus que le
+## `first_free_slot` que le test d'origine appelait deja. Ce qui est verifie
+## ici est l'accord entre les trois reponses, car c'est leur desaccord qui
+## ecrasait un monde : plein, `first_free_slot` renvoie le dernier emplacement,
+## qui est occupe, et l'appelant n'avait aucun moyen de le savoir.
+func _test_title_navigation() -> void:
+	section("emplacements annonces au menu titre")
+	var free := SaveSystem.next_free_slot()
+	var used := SaveSystem.used_slots()
+	check(free == 0 or (free >= 1 and free <= SaveSystem.SLOT_COUNT),
+		"emplacement libre dans la plage, ou aucun (%d)" % free)
+	check(used >= 0 and used <= SaveSystem.SLOT_COUNT,
+		"emplacements occupes dans la plage (%d)" % used)
+	check(SaveSystem.has_free_slot() == (free > 0),
+		"« place libre » et « emplacement libre » disent la meme chose")
+	check(used == SaveSystem.SLOT_COUNT or free <= used + 1,
+		"le premier libre suit le compte des occupes (%d libres, %d occupes)" % [free, used])
+
+
+## Navigation de l'ecran titre : pile de panneaux et touche Echap.
+##
+## Ces deux comportements ne se verifient pas a la lecture du code — ils
+## marchaient tous les deux, et c'est precisement ce qui les rendait
+## invisibles. La pile sert a tester « Nouveau monde » ouvert depuis « Mes
+## mondes » ; la liste des champs sert a ce qu'Echap ne ferme jamais le
+## panneau alors qu'un texte est en cours de saisie.
+##
+## L'ecran est instancie pour de vrai, mais ses autoloads n'existent pas : tous
+## ses acces a `Sounds` et `Net` passent par un `get_node_or_null` qui tolere
+## leur absence.
+func _run_title_checks() -> void:
+	section("navigation de l'ecran titre")
+	var title := TitleScreen.new()
+	title.visible = false
+	root.add_child(title)
+	# `add_child` ne garantit `_ready` que si l'arbre tourne deja : on attend
+	# que les panneaux soient construits plutot que de les piloter a moitie.
+	if not title.is_node_ready():
+		check(false, "l'ecran titre se construit dans l'arbre")
+		title.queue_free()
+		return
+
+	# --- pile de panneaux
+	title.show_panel("worlds")
+	check(title._panel_open() == title._worlds_box, "« Mes mondes » s'ouvre")
+	title.show_panel("new")
+	check(title._panel_open() == title._new_box, "« Nouveau monde » s'ouvre par-dessus")
+	# C'est LE correctif : le retour doit rendre la liste, pas le menu.
+	title.go_back()
+	check(title._panel_open() == title._worlds_box,
+		"Retour depuis « Nouveau monde » rend « Mes mondes »")
+	title.go_back()
+	check(title._panel_open() == title._main_box,
+		"Retour depuis « Mes mondes » rend le menu principal")
+	title.go_back()
+	check(title._panel_open() == title._main_box,
+		"Retour au sommet de la pile ne bouge plus")
+
+	# Le titre repart de sa racine : une pile restee de la session precedente
+	# ramenerait le joueur dans un panneau ferme avant de jouer.
+	title.show_panel("options")
+	title.show_menu(SaveSystem.exists_any(), 5)
+	title.show_panel("worlds")
+	title.go_back()
+	check(title._panel_open() == title._main_box,
+		"« Retour au titre » oublie les panneaux laisses derriere")
+
+	# --- Echap et les champs de saisie
+	var listed := {}
+	for field in title._text_fields():
+		if field != null:
+			listed[field] = true
+	var orphans: Array[String] = []
+	_collect_line_edits(title, listed, orphans)
+	check(orphans.is_empty(),
+		"aucun champ forgot par Echap (%s)" % ", ".join(orphans))
+
+	# --- la graine de la partie hebergee se saisit chez elle. Elle est
+	# independante de celle du monde solo : ce sont deux mondes, et un champ
+	# partage ferait heriter a une partie reseau une graine preparee a cote.
+	# C'est ce que le test verifie — le signal `host_requested` ne doit pas
+	# pouvoir partir avec la graine d'un autre panneau.
+	title.show_panel("net")
+	check(title._net_seed_field != null, "le panneau reseau a son champ de graine")
+	title._net_seed_field.text = "98765"
+	title._seed_field.text = "12345"
+	var hosted: Array[int] = []
+	title.host_requested.connect(func(seed_value: int, _distance: int):
+		hosted.append(seed_value))
+	title._on_host()
+	check(hosted.size() == 1, "« Héberger » emet une graine")
+	check(hosted.size() == 1 and hosted[0] == 98765,
+		"« Héberger » utilise la graine de son panneau, pas celle du monde solo")
+
+	# --- chaque panneau doit tenir dans la carte de meme hauteur. C'est
+	# l'invariant sur lequel repose toute la mise en page du titre, et un champ
+	# de trop le casserait en silence : la carte s'etirerait et le menu sauterait
+	# a chaque changement de panneau, ce que rien d'autre ne signalerait.
+	for entry in [["principal", title._main_box], ["nouveau monde", title._new_box],
+			["reseau", title._net_box], ["reglages", title._options_box],
+			["mondes", title._worlds_box]]:
+		var need := (entry[1] as Control).get_combined_minimum_size().y
+		check(need <= TitleScreen.CARD_INNER,
+			"« %s » tient dans la carte (%d px sur %d)"
+			% [entry[0], roundi(need), roundi(TitleScreen.CARD_INNER)])
+
+	# « Jouer » dit ou il ecrit, et il le dit avant le clic.
+	check(not title._play_slot_label.text.is_empty(),
+		"« Jouer » annonce son emplacement de sauvegarde")
+	if not SaveSystem.has_free_slot():
+		check(title._play_slot_label.text.contains("libre"),
+			"plein : la ligne sous « Jouer » prévient")
+
+	title.queue_free()
+
+
+## Les `LineEdit` de l'ecran qui ne figureraient pas dans la liste d'Echap.
+## Nommes par leur texte indicatif, ce qui permet de nommer le coupable dans le
+## rapport — c'est tout l'interet de l'invariant : ajouter un champ plus tard ne
+## peut pas reintroduire l'oubli sans que le test le dise.
+func _collect_line_edits(node: Node, listed: Dictionary, orphans: Array[String]) -> void:
+	if node is LineEdit and not listed.has(node):
+		orphans.append('"%s"' % (node as LineEdit).placeholder_text)
+	for child in node.get_children():
+		_collect_line_edits(child, listed, orphans)
 
 
 ## Reglages persistants.

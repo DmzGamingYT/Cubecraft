@@ -40,6 +40,7 @@ const HOURS := [
 var checklist: Checklist = null
 
 var _info: Label
+var _perf: Label
 var _report: Label
 var _rows: VBoxContainer
 var _scroll: ScrollContainer
@@ -49,6 +50,15 @@ var _action_buttons: Array[Button] = []
 var _row_marks: Array[Label] = []
 var _row_names: Array[Label] = []
 var _tick := 0.0
+## Cout d'image, en millisecondes : moyenne glissee et pire du rafraichissement
+## courant. Ces valeurs ne mesurent que les images ecoulees **pendant** que le
+## panneau est ouvert, et le disent — c'est la seule fenetre ou l'on regarde.
+var _frame_ms_avg := 0.0
+var _frame_ms_max := 0.0
+## Rythme de planification, releve sur la fenetre du dernier rafraichissement.
+var _sched_seen := 0
+var _sched_at := 0
+var _sched_hz := 0.0
 ## La sequence etait-elle en cours au rafraichissement precedent ? Le passage a
 ## faux declenche le repositionnement du defilement.
 var _was_running := false
@@ -111,6 +121,17 @@ func _build() -> void:
 
 	_info = UiKit.label("", 12, UiKit.TEXT_DIM)
 	body.add_child(_info)
+
+	body.add_child(HSeparator.new())
+
+	# --- Performances -------------------------------------------------------
+	# Ce que l'overlay F3 ne montre pas : ou part le temps d'une image. Les
+	# compteurs de l'info disent *ou en est* le monde, ceux-la disent *ce qu'il
+	# en coutte* — et c'est la seule difference entre « ca rame » et « ca
+	# s'est passe ».
+	body.add_child(UiKit.label("Performances", 17, UiKit.TEXT))
+	_perf = UiKit.label("", 12, UiKit.TEXT_DIM)
+	body.add_child(_perf)
 
 	body.add_child(HSeparator.new())
 
@@ -186,6 +207,14 @@ func open() -> void:
 	# Un ecran ouvert dessous garderait sa souris et son curseur : le menu est
 	# modal, on repart d'un etat neutre.
 	Game.close_screens()
+	# Les compteurs repartent de zero a chaque ouverture. Sans cela, la moyenne
+	# d'image repartirait de 0 et afficherait un chiffre trop bas pendant la
+	# premiere seconde — precisement celle ou l'on ouvre le menu pour juger.
+	_frame_ms_avg = 0.0
+	_frame_ms_max = 0.0
+	_sched_seen = 0
+	_sched_at = Time.get_ticks_msec()
+	_sched_hz = 0.0
 	_hold()
 	_refresh()
 
@@ -217,6 +246,11 @@ func _hold() -> void:
 func _process(delta: float) -> void:
 	if not visible:
 		return
+	# La mesure se fait image par image, avant le filtre de rafraichissement :
+	# n'echantillonner qu'une fois sur sept laisserait passer tous les pics,
+	# qui sont justement ce qu'on cherche ici.
+	_frame_ms_avg = lerpf(_frame_ms_avg, delta * 1000.0, 0.1)
+	_frame_ms_max = maxf(_frame_ms_max, delta * 1000.0)
 	_hold()
 	# Six rafraichissements par seconde suffisent et coute peu : un menu qui
 	# reconstruit ses lignes a 60 images/s ferait ce travail pour rien.
@@ -229,6 +263,7 @@ func _process(delta: float) -> void:
 
 func _refresh() -> void:
 	_update_info()
+	_update_perf()
 	_update_report()
 	_update_rows()
 	_update_buttons()
@@ -240,6 +275,7 @@ func _refresh() -> void:
 func _update_info() -> void:
 	if Game.world == null or Game.player == null:
 		_info.text = "Aucune partie en cours. Lancez-en une, puis revenez ici."
+		_perf.text = ""
 		return
 	var pos: Vector3 = Game.player.global_position
 	var mem := OS.get_static_memory_usage() / 1048576.0
@@ -258,6 +294,51 @@ func _update_info() -> void:
 			Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME),
 			uptime / 60, uptime % 60],
 	])
+
+
+## Ou part le temps d'une image.
+##
+## L'info au-dessus dit *ou en est* le monde ; ce panneau dit *ce que cela
+## coute*. Les quatre postes demandes sont ceux qu'aucun compteur n'evaluait :
+## le prix de la planification, la part du disque reellement mailee, les torches
+## que le monde suit et celles que le pool peut servir, et le temps d'image
+## lui-meme.
+func _update_perf() -> void:
+	var world: World = Game.world
+	if world == null:
+		_perf.text = ""
+		return
+	var tally: Dictionary = world.chunk_tally()
+	# Rythme de planification, releve sur la fenetre qui vient de s'ecouler.
+	var now := Time.get_ticks_msec()
+	var window_s := float(now - _sched_at) / 1000.0
+	if window_s > 0.0:
+		_sched_hz = float(world.schedule_runs - _sched_seen) / window_s
+	_sched_at = now
+	_sched_seen = world.schedule_runs
+
+	var lights := 0
+	if Game.torch_lights != null:
+		lights = Game.torch_lights.active_lights()
+	var physics_ms := Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
+
+	_perf.text = "\n".join([
+		"Image %.1f ms (pic %.1f)   Physique %.1f ms   %d FPS" % [
+			_frame_ms_avg, _frame_ms_max, physics_ms,
+			Engine.get_frames_per_second()],
+		# La planification est le seul poste dont le prix suit la portee de
+		# rendu : c'est elle qu'il faut surveiller quand la distance change.
+		"Planification %.3f ms (moy. %.3f)   %.0f par seconde" % [
+			float(world.schedule_usec) / 1000.0,
+			world.schedule_usec_avg / 1000.0, _sched_hz],
+		"Chunks %d présents, %d maillés, %d en attente" % [
+			world.chunks.size(), int(tally["ready"]), int(tally["pending"])],
+		"Torches %d suivies, %d lumières allumées" % [
+			world.torches.size(), lights],
+	])
+	# Le pic ne sert que jusqu'au prochain rafraichissement : sans cette remise
+	# a zero, il resterait bloque sur le plus mauvais moment de la partie.
+	_frame_ms_max = 0.0
 
 
 func _update_report() -> void:

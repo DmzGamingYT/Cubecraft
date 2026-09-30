@@ -68,6 +68,18 @@ func is_active() -> bool:
 	return visible
 
 
+## L'etape de fissuration courante : 0 a `STAGES - 1`, et -1 quand les
+## fissures sont effacees.
+##
+## C'est l'etat de progression lui-meme, la ou `is_active` n'est qu'un drapeau.
+## Un drapeau peut etre pose et efface entre deux lectures sans qu'aucune ne le
+## voie : les fissures d'un bloc mis en quelques images passeraient alors
+## totalement inapercues. Une progression, elle, se lit — encore faut-il la
+## lire a la cadence ou elle avance, donc dans `Player._process`.
+func stage() -> int:
+	return _stage
+
+
 ## Pose les fissures sur le bloc `pos` (coin inferieur du bloc, comme le
 ## contour de visee) et sur l'etape deduite de `ratio`, de 0 a 1.
 func set_mining(pos: Vector3i, ratio: float) -> void:

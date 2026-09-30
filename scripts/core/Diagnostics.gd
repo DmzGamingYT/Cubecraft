@@ -29,6 +29,9 @@ var mobs: Mobs
 var weather: Weather
 var sun: DirectionalLight3D
 var title: TitleScreen
+## Menu de diagnostic : c'est lui qui affiche le tableau de bord de
+## performances, donc c'est son texte que cette sequence doit lire.
+var menu: DebugMenu
 ## Retour au titre de l'appelant. La sequence se termine par une relance complete
 ## depuis l'ecran titre ; `Diagnostics` n'a pas d'acces a `Main`, donc la
 ## methode lui est passee.
@@ -61,6 +64,11 @@ var ench: EnchantScreen
 ## Objet sur lequel portent les enchantements.
 var sword: int = Items.STONE_SWORD
 
+## Etat des fissures releve pendant le minage, par `_sample_cracks` : l'etage le
+## plus avance vu sur le bloc vise, et la position a laquelle il etait pose.
+var _crack_stage := -1
+var _crack_pos := Vector3.ZERO
+
 
 ## Une image d'attente. Raccourci : ces attentes sont partout dans la sequence,
 ## et passer par `tree` a chaque fois rendrait le code illisible.
@@ -75,7 +83,8 @@ func _physics() -> void:
 func setup(game_tree: SceneTree, game_world: World, game_player: Player,
 		game_hud: HUD, game_mobs: Mobs, game_weather: Weather,
 		game_sun: DirectionalLight3D, game_title: TitleScreen,
-		title_request: Callable, ready_check: Callable) -> void:
+		game_menu: DebugMenu, title_request: Callable,
+		ready_check: Callable) -> void:
 	tree = game_tree
 	world = game_world
 	player = game_player
@@ -84,6 +93,7 @@ func setup(game_tree: SceneTree, game_world: World, game_player: Player,
 	weather = game_weather
 	sun = game_sun
 	title = game_title
+	menu = game_menu
 	back_to_title = title_request
 	is_ready = ready_check
 
@@ -125,6 +135,7 @@ func run() -> void:
 	# ne commence donc que sur une partie liberee.
 	_check("la partie est prete", is_ready.is_valid() and bool(is_ready.call()))
 	_inventory_and_crafting()
+	await _perf_panel()
 	await _survival()
 	await _mining()
 	await _interactions()
@@ -222,6 +233,165 @@ func _inventory_and_crafting() -> void:
 	var view := tree.root.get_visible_rect().size
 	var bar := hud.hotbar.get_global_rect()
 	_check("la barre rapide est dans la fenetre (%s)" % bar, bar.size.y > 0.0 and bar.position.y >= -1.0 and bar.end.y <= view.y + 1.0)
+
+
+## Le tableau de bord de performances du menu de diagnostic.
+##
+## Ses quatre lignes sont des **nombres**, et un nombre faux s'y lit sans
+## broncher : une moyenne d'image qui n'avance pas, un compteur de chunks qui
+## compte les absents, un pool qui annonce seize torches laues alors qu'il
+## n'eclaire rien. Une capture d'ecran ne verrait aucune de ces fautes — il
+## faudrait les lire. La section lit donc le texte reellement affiche, apres
+## avoir laisse le panneau mesurer quelques images.
+##
+## Deux precautions rendent la comparaison exacte plutot que probable. D'abord,
+## les valeurs attendues sont relevees **avant** d'appeler `_refresh`, et sans
+## aucune attente entre les deux : le monde ne peut pas se recharger dans
+## l'intervalle, donc les lignes affichees et les nombres attendus ne peuvent
+## pas diverger. Ensuite, la planification est figee : un monde qui recharge
+## changerait `schedule_usec` sous les yeux du test, et la ligne comparee
+## porterait alors sur une autre planification — un faux echec, aleatoire.
+func _perf_panel() -> void:
+	# Une torche posee a portee du joueur, servie par le pool : sans elle, la
+	# ligne des lumieres afficherait zero et ne prouverait rien.
+	var lights: TorchLights = Game.torch_lights
+	_check("le pool de lumieres est enregistre", lights != null)
+	if lights == null:
+		# Sans pool, plus rien de ce que le panneau affiche n'est comparable.
+		# On s'arrete ici plutot que de laisser une erreur d'instance tuer la
+		# section : elle masquerait les huit verifications suivantes, qui
+		# seraient alors simplement inexecutees.
+		return
+
+	var pos := Vector3i(player.global_position) + Vector3i(3, 0, 0)
+	var posed := world.set_block(pos, Blocks.TORCH) >= 0
+	if posed:
+		for _i in 20:
+			lights._reassign()
+			lights._advance(0.2)
+	_check("une torche posee allume une lumiere du pool",
+		posed and lights.active_lights() > 0,
+		"torche posee=%s, lumieres=%d" % [posed, lights.active_lights()])
+	_check("le monde suit la torche posee", world.torches.has(pos))
+
+	# Le menu, ouvert pour de bon : sa moyenne d'image ne se mesure que sur les
+	# images ecoulees pendant qu'il est visible.
+	menu.open()
+	for _i in 30:
+		await _frame()
+
+	var tally: Dictionary = world.chunk_tally()
+	# `pending` et `ready` se recoupent : un chunk sale mais deja maille compte
+	# dans les deux, c'est voulu. Aucun des deux postes ne peut donc pas
+	# depasser le nombre de chunks presents — un decompte qui le ferait aurait
+	# compte des morceaux deux fois.
+	var resident := 0
+	var ready := 0
+	var pending := 0
+	for key in world.chunks:
+		var chunk: Chunk = world.chunks[key]
+		if chunk == null:
+			continue
+		resident += 1
+		if chunk.state == Chunk.State.READY:
+			ready += 1
+		if chunk.mesh_dirty or chunk.dirty_border:
+			pending += 1
+	_check("le decompte des chunks tombe juste (%d pret, %d en attente)" % [ready, pending],
+		int(tally["ready"]) == ready and int(tally["pending"]) == pending
+			and ready <= resident and pending <= resident,
+		"annonce %d pret / %d en attente, verifie %d / %d pour %d chunks"
+			% [int(tally["ready"]), int(tally["pending"]), ready, pending, resident])
+
+	# Le pic d'image est remis a zero a chaque rafraichissement : on le releve
+	# avant, sinon le test comparerait un chiffre deja oublie.
+	var peak := menu._frame_ms_max
+	var avg := menu._frame_ms_avg
+	var want_frame := "Image %.1f ms (pic %.1f)" % [avg, peak]
+	var want_schedule := "Planification %.3f ms (moy. %.3f)" % [
+		float(world.schedule_usec) / 1000.0, world.schedule_usec_avg / 1000.0]
+	# Sans cela, une planification qui ne se mesurerait plus afficherait
+	# « 0.000 ms » et la ligne comparee resterait exacte : le panneau
+	# annoncerait alors une Activite nulle, sans erreur ni avertissement.
+	_check("le monde mesure le cout de sa planification",
+		world.schedule_runs > 0 and float(world.schedule_usec) > 0.0
+			and world.schedule_usec_avg > 0.0,
+		"%d planification(s), %d us au dernier passage, moyenne %.0f us"
+			% [world.schedule_runs, world.schedule_usec, world.schedule_usec_avg])
+	# La ligne des chunks est comparee au **compte manuel** ci-dessus, pas au
+	# resultat de `chunk_tally` : le panneau et le test lisent alors deux
+	# sources independantes, et une faute du decompte ne peut pas se cacher en
+	# affichant la meme chose des deux cotes.
+	var want_chunks := "Chunks %d présents, %d maillés, %d en attente" % [
+		world.chunks.size(), ready, pending]
+	# Les lumieres reellement allumees, lues dans les `OmniLight3D` eux-memes
+	# et **a l'instant du rafraichissement** : le pool tourne en continu, un
+	# compte pris plus tot ne decouvrirait pas le meme etat.
+	var lit := 0
+	for light in lights._pool:
+		if light.light_energy > 0.001:
+			lit += 1
+	var want_torches := "Torches %d suivies, %d lumières allumées" % [
+		world.torches.size(), lit]
+	# Comme pour les chunks, le nombre affiche est compare a un compte
+	# releve dans le pool lui-meme. Comparer `active_lights()` a lui-meme ne
+	# prouverait rien : une fonction qui renverrait toujours seize ferait
+	# passer les deux cotes a la fois.
+	_check("le pool compte juste ses lumieres allumees",
+		lit == lights.active_lights(),
+		"le pool compte %d lumiere(s) allumee(s), active_lights() dit %d"
+			% [lit, lights.active_lights()])
+
+	# Fige le monde le temps du rafraichissement : voir l'en-tete de la
+	# section.
+	world._schedule_dirty = false
+	menu._refresh()
+	var text: String = menu._perf.text
+
+	_check("le panneau mesure le temps d'image",
+		avg > 0.0 and peak >= avg and text.contains(want_frame),
+		"moyenne %.1f, pic %.1f ; « %s » absent de :\n%s"
+			% [avg, peak, want_frame, text])
+	_check("la ligne de planification suit le monde",
+		text.contains(want_schedule) and text.contains("par seconde"),
+		"« %s » absent de :\n%s" % [want_schedule, text])
+	_check("la ligne des chunks compte presents, mailles et en attente",
+		text.contains(want_chunks),
+		"« %s » absent de :\n%s" % [want_chunks, text])
+	_check("la ligne des torches suit le monde et le pool",
+		text.contains(want_torches),
+		"« %s » absent de :\n%s" % [want_torches, text])
+
+	# Un panneau qui garde le pic d'une ouverture a la suivante afficherait le
+	# plus mauvais moment deja vu, meme apres un chargement rapide : c'est le
+	# chiffre le plus trompeur qu'il puisse sortir. Le rythme de planification,
+	# lui, ne se remet pas a zero — `open` le recalcule aussitot sur la
+	# fenetre qui vient de s'ouvrir. Ce qui compte est que la fenetre reparte
+	# de la planification en cours, sans quoi le rythme afficherait celui de la
+	# session precedente.
+	menu.close()
+	menu.open()
+	_check("l'ouverture repart de compteurs vierges",
+		menu._frame_ms_avg == 0.0 and menu._frame_ms_max == 0.0
+			and menu._sched_seen == world.schedule_runs,
+		"ouverture laissee a %.1f / %.1f ms, fenetre de planification a %d"
+			% [menu._frame_ms_avg, menu._frame_ms_max, menu._sched_seen])
+	menu.close()
+	if posed:
+		world.set_block(pos, Blocks.AIR)
+
+
+## Echantillonne l'etat des fissures et n'en retient que ce qui concerne le bloc
+## vise. Voir `_mining` : ecarter les autres positions est ce qui rend la
+## verification stable.
+func _sample_cracks(target: Vector3i) -> void:
+	var overlay: BreakOverlay = player.break_overlay
+	if overlay == null or not overlay.is_active():
+		return
+	if overlay.global_position.distance_to(Vector3(target)) > 0.001:
+		return
+	_crack_stage = maxi(_crack_stage, overlay.stage())
+	_crack_pos = overlay.global_position
 
 
 ## Le joueur se blesse, mange, meurt et reapparait : la boucle de survie doit
@@ -346,19 +516,30 @@ func _mining() -> void:
 		expected < 20.0)
 
 	var waited := 0
-	# Les fissures du bloc mine : on les echantillonne a chaque image physique,
-	# parce qu'elles paraissent et disparaissent en moins d'une seconde. Une
-	# seule lecture ratee ne prouverait rien — c'est la meme prudence que pour
-	# le contour de visee, qui se pose en `_process` et non en physique.
-	var cracked := false
-	var crack_pos := Vector3.ZERO
+	# Les fissures du bloc mine. On lit l'**etat de progression** — l'etage de
+	# fissuration — et non un drapeau de visibilite, pour deux raisons qui
+	# rendaient l'ancienne lecture instable.
+	#
+	# Le drapeau se pose et s'efface entre deux images physiques : le bloc peut
+	# avoir disparu avant qu'aucun echantillon ne le voie actif. Un etage, lui,
+	# se lit ; encore faut-il le lire a la cadence ou il avance, donc apres une
+	# image de rendu — d'ou le second `await` dans la boucle.
+	#
+	# Et surtout, l'overlay se deplace des que l'ancien bloc cede : le viseur
+	# passe sur le suivant et le joueur mine encore. L'ancien test retenait la
+	# position du **dernier** echantillon visible, si bien qu'un echantillon
+	# tardif, pose sur un autre bloc, contaminait la position comparee. On ne
+	# compte donc que les echantillons effectivement poses sur la cible.
+	_crack_stage = -1
+	_crack_pos = Vector3.ZERO
 	Input.action_press("break")
 	while world.get_block(target) == Blocks.GRASS and waited < 1800:
 		await _physics()
 		waited += 1
-		if player.break_overlay != null and player.break_overlay.visible:
-			cracked = true
-			crack_pos = player.break_overlay.global_position
+		# Une image de rendu par iteration : c'est la cadence a laquelle
+		# `Player._process` pose les fissures, donc la seule ou l'etat existe.
+		await _frame()
+		_sample_cracks(target)
 	# On relache **avant** de juger : le viseur passe aussitot sur le bloc
 	# suivant et repartirait a le casser, et la progression repartirait avec.
 	Input.action_release("break")
@@ -369,10 +550,15 @@ func _mining() -> void:
 		world.get_block(target) == Blocks.AIR)
 	_check("la progression retombe a zero apres la cassure", player.mining_ratio == 0.0)
 	_check("le bloc vise se fend pendant le minage",
-		cracked and crack_pos.distance_to(Vector3(target)) < 0.001,
-		"visible %s a %s, bloc vise %s" % [cracked, crack_pos, target])
+		_crack_stage >= 0 and _crack_pos.distance_to(Vector3(target)) < 0.001,
+		"etage %d a %s, bloc vise %s" % [_crack_stage, _crack_pos, target])
+	# Et la fissure n'est pas figee sur son premier etage : une progression
+	# bloquee se lirait a l'ecran comme un bloc qui ne cede pas.
+	_check("la fissure du bloc vise progresse d'un etage a l'autre",
+		_crack_stage >= 1, "etage le plus avance vu : %d" % _crack_stage)
 	_check("les fissures s'effacent une fois le bloc casse",
-		player.break_overlay != null and not player.break_overlay.visible)
+		player.break_overlay != null and not player.break_overlay.is_active()
+		and player.break_overlay.stage() == -1)
 
 	# On remet le terrain comme on l'a trouve : la suite raisonne sur un monde
 	# continu, et le joueur ne doit pas tomber dans le trou qu'on a creuse.

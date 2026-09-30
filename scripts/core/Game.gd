@@ -26,6 +26,11 @@ var hud: CanvasLayer
 var fx: Fx
 var mobs: Mobs
 var weather: Weather
+## Pool d'eclairage des torches. Enregistre comme les autres objets de partie :
+## le tableau de bord du menu de diagnostic doit pouvoir dire combien de
+## lumieres sont reellement allumees, et le menu n'a pas a chercher le noeud
+## dans l'arbre.
+var torch_lights: TorchLights
 ## Post-traitement d'ecran (voir `PostFx`). Il existe des l'ecran titre, donc
 ## il n'est pas range parmi les noeuds de partie.
 var postfx: PostFx
@@ -92,6 +97,8 @@ func register(actor: Node) -> void:
 		mobs = actor
 	elif actor is Weather:
 		weather = actor
+	elif actor is TorchLights:
+		torch_lights = actor
 
 
 func start() -> void:

@@ -150,6 +150,13 @@ func _pool_shape() -> void:
 			% [_lights._pool.size(), TorchLights.COUNT])
 	else:
 		_ok("une OmniLight3D par emplacement")
+	# `active_lights` est ce que lit le tableau de bord du menu de diagnostic :
+	# encore faut-il qu'il compte les lumieres allumees, et pas les emplacements.
+	if _lights.active_lights() != 0:
+		_fail("active_lights() annonce %d lumieres sur un pool vide"
+			% _lights.active_lights())
+	else:
+		_ok("active_lights() annonce 0 sur un pool vide")
 	# Le moteur plafonne les lumieres par objet : si le reservoir ne depasse
 	# pas ce plafond, les torches lointaines ne sont jamais calculees.
 	var ceiling := int(ProjectSettings.get_setting(
@@ -236,6 +243,16 @@ func _overflow() -> void:
 			% [lit.size(), 25, TorchLights.COUNT])
 	else:
 		_ok("les %d emplacements sont occupes, le surplus est ignore"
+			% TorchLights.COUNT)
+
+	# Vingt-cinq torches, seize lumieres : c'est exactement l'ecart que le
+	# tableau de bord doit rendre lisible, et il ne peut le faire que si
+	# `active_lights` compte les lumieres servies et non les sources vues.
+	if _lights.active_lights() != TorchLights.COUNT:
+		_fail("active_lights() annonce %d lumieres, attendu %d"
+			% [_lights.active_lights(), TorchLights.COUNT])
+	else:
+		_ok("active_lights() annonce %d lumieres pour 25 torches"
 			% TorchLights.COUNT)
 
 	# Les retenues doivent etre les plus proches du joueur, sinon la torche

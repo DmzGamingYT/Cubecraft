@@ -44,7 +44,13 @@ func _process(_delta: float) -> bool:
 	_trees()
 	_depth()
 
-	_screen.queue_free()
+	# Detruit et non `queue_free` : la liberation par `queue_free` est differee
+	# a la fin de l'image, et `quit` part immediatement apres — elle n'aurait
+	# donc jamais lieu. Detruit explicitement, l'ecran disparait vraiment ; les
+	# RIDs qui restaient a la sortie venaient des deux `Ridge` ci-dessous.
+	root.remove_child(_screen)
+	_screen.free()
+	_screen = null
 	if _fails == 0:
 		print("\nOK : le relief du menu est correct.")
 	else:
@@ -165,6 +171,7 @@ func _periodic() -> void:
 	var n := probe.heights.size()
 	if n <= period:
 		_fail("le profil force sur %.0f px ne couvre qu'une periode" % wide)
+		probe.free()
 		return
 	_ok("profil de %.0f px : %d colonnes, une periode en %d" % [wide, n, period])
 
@@ -187,6 +194,12 @@ func _periodic() -> void:
 		_fail("deux reliefs de meme largeur n'ont pas le meme profil")
 	else:
 		_ok("profil reproductible d'un ecran a l'autre")
+
+	# `Ridge` herite de `Control` et n'est construit que pour porter le profil :
+	# hors de tout arbre, il n'a personne pour le detruire. Deux controles et
+	# leurs `CanvasItem` restaient donc vivants a la sortie.
+	again.free()
+	probe.free()
 
 	# Et le relief reellement affiche n'a pas bougé pendant ces essais : les
 	# vérifications ne doivent pas laisser le menu dans un etat different.

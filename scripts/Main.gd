@@ -675,7 +675,7 @@ func _run_diagnostics() -> void:
 	# sequence finit par demonter la partie et la relancer, et ni le retour au
 	# titre ni l'etat « pret a jouer » ne peuvent etre captures au depart.
 	_diag.setup(get_tree(), world, player, hud, mobs, weather, sun, title,
-		_on_back_to_title, func() -> bool: return _ready_to_play)
+		debug_menu, _on_back_to_title, func() -> bool: return _ready_to_play)
 	_diag.finished = _on_diagnostics_finished
 	debug_menu.set_checklist(_diag.checklist)
 	debug_menu.add_log("Sequence de verifications lancee…")
@@ -827,6 +827,7 @@ func _start_new_game(seed_value: int, distance: int, from_save := false,
 	Game.fx = fx
 	Game.mobs = mobs
 	Game.weather = weather
+	Game.torch_lights = torch_lights
 	weather.bind(env, _sky_material)
 	_build_ui()
 	Game.hud = hud
@@ -1146,6 +1147,7 @@ func _on_back_to_title() -> void:
 	Game.fx = null
 	Game.mobs = null
 	Game.weather = null
+	Game.torch_lights = null
 	Game.weather_dim = 1.0
 	_ready_to_play = false
 	_show_loading(false)
@@ -1552,7 +1554,7 @@ func _capture_ascii(name := "cubecraft_capture.png") -> void:
 func _run_ui_test() -> void:
 	var diag := Diagnostics.new()
 	diag.setup(get_tree(), world, player, hud, mobs, weather, sun, title,
-		_on_back_to_title, func() -> bool: return _ready_to_play)
+		debug_menu, _on_back_to_title, func() -> bool: return _ready_to_play)
 	await diag.run()
 	print("UI %s" % diag.checklist.report_line())
 	var failed := diag.checklist.failed_names()

@@ -53,6 +53,14 @@ var _queued_mesh: Dictionary = {}
 var _schedule_dirty := true
 var _last_schedule_at := 0
 
+## Cout de la derniere planification, en microsecondes, sa moyenne glissee, et
+## le nombre de planification depuis le lancement. Le tableau de bord du menu de
+## diagnostic les lit : sans eux, rien ne dit que `_schedule` est le poste dont
+## le prix depend de la portee de rendu.
+var schedule_usec := 0
+var schedule_usec_avg := 0.0
+var schedule_runs := 0
+
 ## Positions des blocs qui emettent de la lumiere (torches), pour TorchLights.
 var torches: Dictionary = {}
 
@@ -72,9 +80,21 @@ func _ready() -> void:
 		setup(seed_value, render_distance)
 
 
+## Les taches en vol referencent cet objet : on les laisse finir avant de
+## mourir, sinon un worker thread toucherait un objet deja detruit.
+##
+## **Cette boucle est portante, et son code ne dit pas pourquoi.** Elle a l'air
+## d'une precaution : deux secondes a attendre un travail dont le resultat sera
+## de toute facon jete avec le monde. On l'a donc supprimee — et le moteur s'est
+## mis a pendre a la fermeture, bloque sur une variable de condition du
+## `WorkerThreadPool` : `SmokeTest` terminait ses verifications puis ne rendait
+## jamais la main. Le moteur a besoin que les workers aient fini avant d'ete
+## tear down ; sans boucle, ils tournaient encore a la destruction. Le role
+## exact du moteur n'est pas evident, le fait, lui, est mesure.
+##
+## Ne pas la retirer « parce qu'elle ne sert a rien ». `CheckWorld` garde
+## l'invariant : sans elle, les files ne sont pas videes.
 func _exit_tree() -> void:
-	# Les taches en vol referencent cet objet : on les laisse finir avant de
-	# mourir, sinon un worker thread toucherait un objet deja detruit.
 	var deadline := Time.get_ticks_msec() + 2000
 	while (_queued_gen.size() > 0 or _queued_mesh.size() > 0) \
 			and Time.get_ticks_msec() < deadline:
@@ -202,7 +222,37 @@ func update(player_pos: Vector3) -> void:
 	if _schedule_dirty:
 		_schedule_dirty = false
 		_last_schedule_at = now
+		# Le calendrier ne dit pas ce qu'il coute : on le mesure, parce que c'est
+		# le seul poste dont le prix depend de la portee de rendu. C'est lui que
+		# le tableau de bord du menu de diagnostic lit.
+		var began := Time.get_ticks_usec()
 		_schedule()
+		schedule_usec = Time.get_ticks_usec() - began
+		# Moyenne glissee : une seule planification ne dit rien — elle est
+		# courte quand rien ne change, longue quand le disque se charge. La
+		# moyenne lisse les deux, et le dernier appel reste affiche a part.
+		schedule_usec_avg = lerpf(schedule_usec_avg, float(schedule_usec), 0.2)
+		schedule_runs += 1
+
+
+## Repartition des chunks residents : {ready, pending}.
+##
+## `ready` compte ceux dont le maillage est applique et applique, `pending`
+## ceux qui attendent encore le leur — voisins incomplets, ou edition recente.
+## Les deux ensemble distinguent « le disque est charge » de « le disque est en
+## retard » : le compteur de chunks seul ne le dit pas.
+func chunk_tally() -> Dictionary:
+	var ready := 0
+	var pending := 0
+	for key in chunks:
+		var chunk: Chunk = chunks[key]
+		if chunk == null:
+			continue
+		if chunk.state == Chunk.State.READY:
+			ready += 1
+		if chunk.mesh_dirty or chunk.dirty_border:
+			pending += 1
+	return {"ready": ready, "pending": pending}
 
 
 ## Le disque de terrain autour du joueur est-il complet ?

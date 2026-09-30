@@ -112,20 +112,25 @@ La manette et l'écran de lancement sont détaillés dans
 
 ## Tests
 
-780 vérifications automatiques, toutes en headless, lancées par la CI à chaque
+901 vérifications automatiques, toutes en headless, lancées par la CI à chaque
 push :
 
 | Suite | Vérifications |
 |---|---|
-| `tools/SmokeTest.gd` | 575 |
-| `--uitest` | 93 |
+| `tools/SmokeTest.gd` | 686 |
+| `--uitest` | 105 |
 | `tools/NetTest.gd` | 67 |
-| `tools/CheckContent.gd` | 30 |
+| `tools/CheckContent.gd` | 28 |
 | `tools/CheckLights.gd` | 15 |
+
+Deux suites existent encore, lancées à la main : `tools/CheckTitle.gd` (26, le
+relief de l'écran titre) et `tools/CheckWorld.gd` (7, le vidage des files de
+tâches à la mort du monde) — cette dernière s'arrête sur un `abort` du moteur
+en quittant, sa sortie ne peut donc pas être lue par la CI.
 
 ```bash
 godot --headless --import                            # compile tout le projet
-godot --headless --script res://tools/SmokeTest.gd   # 575 verifications
+godot --headless --script res://tools/SmokeTest.gd   # 686 verifications
 ```
 
 Le détail des suites et du menu de diagnostic est dans

@@ -10,7 +10,15 @@ jeu evaluait jusqu'ici dans une console invisible.
 
 - **Informations** : graine, portée, FPS, position, chunks, torches, mémoire,
   draws, durée de session.
-- **Vérifications du jeu** : les 93 vérifications d'inventaire, de fabrication,
+- **Performances** : ce que l'information ci-dessus ne dit pas — *ce que cela
+  coûte*. Le temps d'image (moyenne glissée et pire image depuis l'ouverture),
+  le coût de la planification du disque (dernier passage, moyenne, rythme par
+  seconde), puis les chunks présents, maillés et en attente, et les torches que
+  le monde suit face à celles que le pool de seize lumières sert réellement.
+  Les compteurs repartent de zéro à chaque ouverture : sinon le pic resterait
+  affiché sur le plus mauvais moment de la partie, même après un chargement
+  rapide.
+- **Vérifications du jeu** : les 105 vérifications d'inventaire, de fabrication,
   de survie, de mobs, d'enchantement, de météo, puis de retour au titre et de
   relance d'une partie. Le résultat s'affiche ligne à ligne pendant l'exécution
   (vert, rouge, gris), le rapport est épinglé en haut, et la liste défile seule.
@@ -37,12 +45,13 @@ vérifications se remplissent et que la partie repart.
 
 ```bash
 godot --headless --import                    # compile tout le projet
-godot --headless --script res://tools/SmokeTest.gd   # 575 verifications
-godot --headless --uitest --distance=3       # 93 verifications d'interface
-godot --headless --script res://tools/NetTest.gd     # 68 verifications reseau
-godot --headless --script res://tools/CheckContent.gd # 30 : contenu atteignable
+godot --headless --script res://tools/SmokeTest.gd   # 686 verifications
+godot --headless --uitest --distance=3       # 105 verifications d'interface
+godot --headless --script res://tools/NetTest.gd     # 67 verifications reseau
+godot --headless --script res://tools/CheckContent.gd # 28 : contenu atteignable
 godot --headless --script res://tools/CheckLights.gd  # 15 : eclairage dynamique
-godot --headless --script res://tools/CheckTitle.gd   # 22 : relief du menu
+godot --headless --script res://tools/CheckTitle.gd   # 26 : relief du menu
+godot --headless --script res://tools/CheckWorld.gd   # 7 : cycle de vie des taches
 godot --headless --script res://tools/TileDump.gd -- grass_side   # une tuile en ASCII
 godot --headless --script res://tools/TreeDump.gd                   # un arbre en coupe
 godot --headless --script res://tools/IconDump.gd                    # les icones de blocs
@@ -65,6 +74,37 @@ dégâts de chute, pomme, mort et réapparition, règles d'apparition des mobs,
 retour à l'écran titre puis relance d'une partie depuis ce même écran titre. Il
 partage son code avec le menu de diagnostic (`Diagnostics` + `Checklist`) : un
 seul test, deux portes d'entrée — la console au démarrage, le menu en partie.
+
+C'est aussi là que se vérifie le **tableau de bord de performances**, parce que
+ses quatre lignes sont des nombres, et qu'un nombre faux ne se voit pas sur une
+capture d'écran : il faudrait le lire. La section ouvre le menu sur une partie
+réelle, pose une torche pour que la ligne des lumières vaille autre chose que
+zéro, laisse le panneau mesurer trente images, puis compare le texte affiché —
+ligne par ligne — aux chiffres relevés ailleurs. Deux précautions rendent la
+comparaison exacte plutôt que probable : les valeurs attendues sont relevées
+juste avant l'appel, sans aucune attente au milieu (le monde ne peut pas se
+recharger dans l'intervalle), et la planification est figée le temps de la
+lecture. Le comptage des chunks et celui des lumières sont comparés à des
+**recomptages manuels**, jamais à la fonction que le panneau appelle : sinon une
+faute de cette fonction afficherait la même valeur des deux côtés, et les deux
+cotes seraient d'accord pour rien.
+
+**Observer un état à la cadence où il écrit.** Une seule vérification
+était instable, et la cause était instructive : elle demandait « les fissures
+sont-elles affichées ? », un simple drapeau, échantillonné une fois par image
+physique. Or les fissures sont posées dans `Player._process` — une image de
+rendu — et le test observait à une autre cadence. Elle lisait donc l'état en
+retard, et l'overlay se déplace dès que l'ancien bloc cède : un
+échantillon tardif, posé sur le bloc suivant, contaminait la position
+comparée. Le bloc cédait en 3 s et le test ratait une fois sur vingt.
+
+Le remède tient en deux gestes. On lit l'**état de progression**
+(`BreakOverlay.stage()`) plutôt qu'un drapeau : un étage se lit, là où une
+visibilité peut être posée et effacée entre deux lectures sans qu'aucune ne la
+voie. Et on n'échantillonne que ce qui concerne la cible, au lieu de retenir la
+position du dernier échantillon. Une vérification qui lit à la mauvaise
+cadence n'est pas déterministe par hasard : elle est fausse une fois sur
+N, et le rattrapage par un `print` la masque.
 
 Le test réseau (`NetTest`) lance de **vrais processus** — un hôte et deux
 clients, car deux `MultiplayerAPI` ne peuvent pas coexister dans un seul
@@ -100,10 +140,25 @@ tout cela passe le test de fumée.
   profil boucle-t-il sur une période, les arbres sont-ils posés sur des
   sommets et espacés, les deux plans se distinguent-ils, et le relief repose-t-il
   sur la même ligne de sol que la bande d'herbe.
+- **`CheckWorld.gd`** garde un invariant qui a coûté cher à retrouver : la
+  destruction d'un monde **vidange ses files de tâches** avant de mourir. Cette
+  boucle de deux secondes, dans `_exit_tree`, ressemble à de la politesse — le
+  résultat sera de toute façon jeté avec le monde. On l'a supprimée, et le
+  moteur s'est mis à pendre à la fermeture : `SmokeTest` terminait ses
+  vérifications puis ne rendait jamais la main, bloqué sur une variable de
+  condition du `WorkerThreadPool`. Le test appelle `_exit_tree` directement et
+  vérifie que les deux files reviennent vides — le monde n'est libéré qu'après,
+  une fois le travail terminé, pour qu'une régression se lise comme un échec et
+  non comme un blocage.
 
-Tous trois se lancent en `--script`, où il n'y a pas d'autoload : c'est aussi
+Tous quatre se lancent en `--script`, où il n'y a pas d'autoload : c'est aussi
 pourquoi `TorchLights` prend sa cible dans un champ `follow` plutôt que de lire
-`Game.player`.
+`Game.player`, et pourquoi la vérification du tableau de bord vit dans
+`--uitest` — le menu y lit l'autoload `Game`, il n'est pas instanciable en
+mode `--script`. `CheckWorld` fait exception côté CI : il rend son verdict mais
+le moteur s'arrête sur un `abort` en quittant (voir
+[limites.md](limites.md)), donc son code de sortie ne peut rien tenir dans le
+build — il reste lancé à la main.
 
 ## Options en ligne de commande
 
@@ -120,7 +175,7 @@ godot --pauseshot                      # capture pause et inventaire (2 PNG)
 godot --titletest                      # idem, 5 PNG (voir plus bas)
 godot --debugshot                      # capture le menu de debug (F4)
 godot --debugrun                       # lance les verifications par le menu
-godot --uitest                         # 93 verifications d'interface
+godot --uitest                         # 94 verifications d'interface
 ```
 
 godot --screenshot --seconds=10        # diagnostic : monde en ASCII puis sortie
@@ -131,7 +186,7 @@ godot --pauseshot                      # capture pause et inventaire (2 PNG)
 godot --titletest                      # idem, 5 PNG (voir plus bas)
 godot --debugshot                      # capture le menu de debug (F4)
 godot --debugrun                       # lance les verifications par le menu
-godot --uitest                         # 93 verifications d'interface
+godot --uitest                         # 94 verifications d'interface
 ```
 
 Les cinq modes de capture exigent une fenetre : en `--headless`,

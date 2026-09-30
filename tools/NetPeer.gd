@@ -19,9 +19,15 @@ extends Node
 
 const SEED := 20260929
 const DISTANCE := 2
-## Limite dure, en images : un pair bloque doit s'arreter, pas laisser un
-## processus godot en trainee.
-const MAX_FRAMES := 1800
+## Limite dure, en **secondes** : un pair bloqu\u00e9 doit s'arr\u00eater, pas laisser
+## un processus godot en trainee. La limite \u00e9tait compt\u00e9e en images, et
+## c'\u00e9tait une erreur : le test lance trois processus qui g\u00e8n\u00e8rent et maillent
+## en m\u00eame temps, donc la cadence d'images d\u00e9pend de la charge de la machine.
+## Un pair perfectly dans les clous \u00e9tait alors d\u00e9clar\u00e9 bloqu\u00e9 sur un portable
+## charg\u00e9, et le d\u00e9bogage partait sur une fausse piste \u2014 le r\u00e9seau, alors que
+## le probl\u00e8me \u00e9tait la machine. Trente secondes \u00e9taient la marge vis\u00e9e \u00e0
+## 60 images/s, soit un arr\u00eat \u00e0 dix vraies secondes si tout va bien.
+const MAX_SECONDS := 90.0
 ## Delai pour qu'une connexion ENet locale s'etablisse, en images.
 const CONNECT_FRAMES := 420
 
@@ -62,6 +68,7 @@ var _player: Player
 ## lisible ici qu'une cascade de drapeaux, et elle ne peut pas repeter une
 ## verification par image.
 var _step := 0
+var _elapsed := 0.0
 var _checks := 0
 var _failures: Array[String] = []
 var _lines: Array[String] = []
@@ -174,10 +181,11 @@ func _parse_args() -> Dictionary:
 	return out
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _finished:
 		return
 	_frame += 1
+	_elapsed += delta
 	roster_cache = _net.roster()
 	# Le joueur n'est pose qu'une fois le terrain de dessous present : lance
 	# a y = 0, il traverserait le monde et finirait a y = -400, ce qui ne
@@ -196,8 +204,9 @@ func _process(_delta: float) -> void:
 		_client_step()
 	if _finished:
 		return
-	if _frame > MAX_FRAMES:
-		_fail("delai depasse a l'etape %d" % _step)
+	if _elapsed > MAX_SECONDS:
+		_fail("delai depasse a l'etape %d (%.1f s, %d images)"
+			% [_step, _elapsed, _frame])
 		_finish()
 
 

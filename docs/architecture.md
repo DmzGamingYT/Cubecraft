@@ -15,7 +15,7 @@ scripts/
            Game           autoload : pause, écrans, sauvegarde, liaison scène
            InputSetup     autoload : touches, manette
            Checklist      journal de vérifications, partagé test et menu
-           Diagnostics    les 93 vérifications, jouables depuis le menu (F4)
+           Diagnostics    les 105 vérifications, jouables depuis le menu (F4)
            Net            autoload ENet : salon, admissions, diffusion
            SaveSystem     emplacements compressés dans user://, + index
            Settings       réglages persistants, bornés à la lecture
@@ -36,7 +36,8 @@ scripts/
            RemotePlayer   avatar distant : même corps, animé par le réseau
   ui/      HUD, barre rapide, écrans de conteneur, établi, enchantement,
            menu pause, écran de mort, overlay de debug,
-           DebugMenu  panneau de diagnostic (F4), journal et vérifications
+           DebugMenu  panneau de diagnostic (F4), performances, journal,
+                       vérifications
            PostFx     post-traitement d'écran cyclable (F6), un seul passage
            Lobby      salon d'attente en réseau
            TitleScreen    menu, ciel procédural, relief de voxels, logo animé
@@ -57,6 +58,7 @@ tools/SmokeTest.gd        test de bout en bout, sans écran
            CheckContent.gd  le contenu ajouté est-il vraiment atteignable ?
            CheckLights.gd   le pool garde-t-il sa source quand on marche ?
            CheckTitle.gd    le relief du menu boucle-t-il et repose-t-il au sol ?
+           CheckWorld.gd    un monde vide-t-il ses files de taches en mourant ?
            TileDump/TreeDump/IconDump/CheckExternal  diagnostics ponctuels
 ```
 

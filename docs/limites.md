@@ -4,13 +4,6 @@
 
 ## Limites connues
 
-- La vérification « le bloc visé se fend pendant le minage » est **instable** :
-  elle n'échantillonne `BreakOverlay.visible` qu'une fois par image physique,
-  et un bloc d'herbe casse à la main nue en quelques images — il arrive que le
-  bloc disparaisse avant qu'aucune image n'ait vu les fissures. Le reste de la
-  suite est déterministe. Une capture d'état dans `BreakOverlay` (l'étape de
-  progression plutôt que sa visibilité par image) la rendrait fiable.
-
 - Le multijoueur fonctionne en hôte/client sur ENet, avec un salon d'attente et
   un **chat** (`T`), mais reste minimal : pas de whitelist, pas de reprise de
   session, aucun historique — le journal du bas de l'écran fait huit lignes et
@@ -33,6 +26,11 @@
 - Les modes de capture (`--screenshot`, `--titletest`, `--pauseshot`,
   `--loadingshot`) exigent une fenêtre : en `--headless`, Godot ne rend rien et
   la capture attendrait indéfiniment.
+- `CheckWorld.gd` rend son verdict, puis le moteur s'arrête sur un `abort` en
+  quittant : le `WorkerThreadPool` de cette version plante à l'arrêt d'un script
+  qui a soumis des tâches de fond, même pour un travail trivial. Le test n'est
+  donc pas dans la CI — un code de sortie 134 se lirait comme une régression.
+  Il se lance à la main, et sa dernière ligne avant l'abort fait foi.
 - L'aperçu du personnage de l'écran titre **consomme les clics** : il reçoit le
   bouton gauche pour pivoter, donc un futur bouton posé par-dessus ne serait pas
   cliquable. La rotation se fait uniquement au bouton gauche — pas de glisser au
