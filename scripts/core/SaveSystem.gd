@@ -38,11 +38,48 @@ static func exists(slot: int) -> bool:
 ## dans le premier libre, deux parties rapides successives ne s'ecrasent pas.
 ## Le dernier n'est pas le premier : ecraser une partie choisie plutot qu'une
 ## autre vaut mieux que d'ecraser silencieusement l'emplacement 1.
+##
+## **Ce repli n'est pas une permission d'ecraser.** Appeler cette fonction sans
+## avoir demande `has_free_slot()` revient a detruire un monde, en silence, la
+## premiere fois que la sauvegarde suivante part. C'est pourquoi l'appelant du
+## menu passe par `next_free_slot`, qui renvoie 0 plutot qu'un emplacement
+## occupe.
 static func first_free_slot() -> int:
 	for slot in range(1, SLOT_COUNT + 1):
 		if not exists(slot):
 			return slot
 	return SLOT_COUNT
+
+
+## Premier emplacement libre, ou **0** s'il n'en reste aucun. Zero n'est jamais
+## un emplacement : `exists(0)` est faux et `write(..., 0)` n'est appele par
+## personne, puisque `Game.save_game` refuse cette valeur. C'est donc la seule
+## reponse honnete quand les six places sont prises — les deux autres
+##angements, ecraser le dernier ou refuser la partie, se contentent de
+## deplacer le probleme.
+static func next_free_slot() -> int:
+	for slot in range(1, SLOT_COUNT + 1):
+		if not exists(slot):
+			return slot
+	return 0
+
+
+## Reste-t-il une place ? C'est la question que pose « Jouer » avant d'ecrire :
+## quand elle ne dit pas oui, la partie partirait quand meme et la premiere
+## sauvegarde ecraserait le dernier monde du joueur.
+static func has_free_slot() -> bool:
+	return next_free_slot() > 0
+
+
+## Nombre d'emplacements occupes. Le menu titre s'en sert pour annoncer ou part
+## « Jouer » : sans ce compte, rien ne dit qu'un bouton aussi simple consomme
+## l'une des six places, ni qu'il en reste.
+static func used_slots() -> int:
+	var used := 0
+	for slot in range(1, SLOT_COUNT + 1):
+		if exists(slot):
+			used += 1
+	return used
 
 
 ## Emplacement enregistre le plus recemment, ou 0 s'il n'y en a aucun. C'est ce
