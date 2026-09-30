@@ -1,4 +1,4 @@
-# Les 781 verifications du projet ne tournaient jusqu'ici que sur la machine
+# Les verifications du projet ne tournaient jusqu'ici que sur la machine
 # de l'auteur, a la main. Ce workflow les lance a chaque push.
 #
 # Deux details insidersistent et ne sont pas des mobiles :
@@ -64,19 +64,19 @@ jobs:
       - name: Rendre le script de reessai executable
         run: chmod +x .github/scripts/run-suite.sh
 
-      - name: SmokeTest — 575 verifications
+      - name: SmokeTest
         run: .github/scripts/run-suite.sh SmokeTest "$HOME/godot" --headless --script res://tools/SmokeTest.gd
 
-      - name: Interface — 93 verifications
+      - name: Interface
         run: .github/scripts/run-suite.sh Interface "$HOME/godot" --headless --uitest --distance=3
 
-      - name: Reseau — 68 verifications
+      - name: Reseau
         run: .github/scripts/run-suite.sh Reseau "$HOME/godot" --headless --script res://tools/NetTest.gd
 
-      - name: Contenu atteignable — 30 verifications
+      - name: Contenu atteignable
         run: .github/scripts/run-suite.sh Contenu "$HOME/godot" --headless --script res://tools/CheckContent.gd
 
-      - name: Eclairage — 15 verifications
+      - name: Eclairage
         run: .github/scripts/run-suite.sh Eclairage "$HOME/godot" --headless --script res://tools/CheckLights.gd
 
       # Les autres scripts de `tools/` (dumps, capture de tuiles, eclairage,

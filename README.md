@@ -112,14 +112,14 @@ La manette et l'écran de lancement sont détaillés dans
 
 ## Tests
 
-781 vérifications automatiques, toutes en headless, lancées par la CI à chaque
+780 vérifications automatiques, toutes en headless, lancées par la CI à chaque
 push :
 
 | Suite | Vérifications |
 |---|---|
 | `tools/SmokeTest.gd` | 575 |
 | `--uitest` | 93 |
-| `tools/NetTest.gd` | 68 |
+| `tools/NetTest.gd` | 67 |
 | `tools/CheckContent.gd` | 30 |
 | `tools/CheckLights.gd` | 15 |
 
