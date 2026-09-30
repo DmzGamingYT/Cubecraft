@@ -127,6 +127,7 @@ func run() -> void:
 	_inventory_and_crafting()
 	await _survival()
 	await _mining()
+	await _interactions()
 	await _mobs_and_xp()
 	await _enchantments()
 	await _weather()
@@ -377,6 +378,81 @@ func _mining() -> void:
 	# continu, et le joueur ne doit pas tomber dans le trou qu'on a creuse.
 	world.set_block(target, previous)
 	await _physics()
+
+
+## Clic droit sur un bloc special, et visee a la manette.
+##
+## Ces deux verifications traitent de la meme chose : ce que le jeu decide
+## *avant* d'agir. Le clic droit teste d'abord l'interaction, et seulement
+## ensuite la pose ; la visee, elle, laisse le stick droit tourner des que la
+## souris se tait. Les deux etaient faux sans jamais lever une erreur : le
+## premier fermait l'etabli des qu'on tenait une pioche, le second coupait la
+## manette pendant toute la partie — puisque la souris capturee EST l'etat
+## normal du jeu.
+func _interactions() -> void:
+	# L'etabli, vu de face, a hauteur d'oeil : on vise droit dessus pour que le
+	# raycast ne depende ni du relief ni du biome. Lacet nul = regard vers -Z, et
+	# la premiere cellule rencontree est donc celle d'avant celle de l'oeil.
+	player.set_yaw(0.0)
+	player.set_pitch(0.0)
+	await _physics()
+	var eye: Vector3 = player.camera.global_position
+	var table_pos := Vector3i(floori(eye.x), floori(eye.y), floori(eye.z) - 1)
+	world.set_block(table_pos, Blocks.CRAFTING_TABLE)
+	var hit := VoxelRaycast.cast(world, eye, player.look_direction(), Player.REACH)
+	_check("l'etabli pose est vise", hit["hit"] and hit["pos"] == table_pos
+		and hit["block"] == Blocks.CRAFTING_TABLE)
+
+	# Main vide : c'est le cas le plus banal, et celui que la pioche rendait
+	# impossible.
+	player.inventory.reset()
+	Game.close_screens()
+	player._interact(hit)
+	_check("l'etabli s'ouvre main vide", Game.screen == Game.Screen.CRAFTING)
+	Game.close_screens()
+
+	# Main pleine d'un objet qui n'a pas de bloc a poser : c'est exactement ce
+	# qu'on tient apres avoir fabrique la pioche en bois.
+	player.inventory.slots[0] = {"id": Items.WOOD_PICKAXE, "count": 1}
+	player._interact(hit)
+	_check("l'etabli s'ouvre pioche en main", Game.screen == Game.Screen.CRAFTING)
+	Game.close_screens()
+	player.inventory.reset()
+
+	# La table d'enchantement passe par le meme chemin et doit rester ouverte.
+	var ench_pos := Vector3i(floori(eye.x), floori(eye.y), floori(eye.z) + 1)
+	world.set_block(ench_pos, Blocks.ENCHANTING_TABLE)
+	var ench_hit := VoxelRaycast.cast(world, eye, -player.look_direction(), Player.REACH)
+	_check("la table d'enchantement est visee", ench_hit["hit"]
+		and ench_hit["block"] == Blocks.ENCHANTING_TABLE)
+	player._interact(ench_hit)
+	_check("la table d'enchantement s'ouvre toujours", Game.screen == Game.Screen.ENCHANTING)
+	Game.close_screens()
+	world.set_block(table_pos, Blocks.AIR)
+	world.set_block(ench_pos, Blocks.AIR)
+
+	# Visee a la manette. La souris garde la main pendant `STICK_YIELD_MS` apres
+	# son dernier mouvement, et le stick ne tourne qu'apres : le test d'avant
+	# neutralisait le stick sur le seul fait que la souris soit capturee, ce qui
+	# est l'etat normal du jeu — la visee a la manette y etait morte.
+	player._mouse_moved_at = Time.get_ticks_msec()
+	var yaw_still := player.get_yaw()
+	Input.action_press("look_right")
+	player._update_look(0.1)
+	_check("la souris garde la main quand elle bouge",
+		is_equal_approx(player.get_yaw(), yaw_still)
+		and player._mouse_claims_look())
+	Input.action_release("look_right")
+
+	# La souris vient de se taire : le stick doit tourner la camera.
+	player._mouse_moved_at = Time.get_ticks_msec() - Player.STICK_YIELD_MS - 1
+	Input.action_press("look_right")
+	player._update_look(0.1)
+	var yaw_moved := player.get_yaw()
+	Input.action_release("look_right")
+	_check("le stick droit tourne des que la souris se tait",
+		not is_equal_approx(yaw_moved, yaw_still) and not player._mouse_claims_look())
+	player._mouse_moved_at = -1
 
 
 ## Apparition des mobs selon l'heure, brulure au soleil, degats, mort, xp.

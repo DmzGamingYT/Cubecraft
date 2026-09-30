@@ -31,6 +31,12 @@ const FOV_FLY := 95.0
 const BOB_FREQUENCY := 9.0
 const BOB_AMOUNT := 0.055
 
+## Duree pendant laquelle la souris garde la main sur le regard, apres son
+## dernier mouvement. Le stick droit cede la main a ce delai : c'est assez long
+## pour qu'un joueur a la souris ne sente jamais le stick, et assez court pour
+## qu'un joueur a la manette retrouve la visee des qu'il pose la souris.
+const STICK_YIELD_MS := 250
+
 signal target_changed(block_id: int)
 signal mining_progress(ratio: float)
 
@@ -70,6 +76,8 @@ var _head_in_water := false
 var _feet_in_water := false
 var _was_on_floor := true
 var _highlight_mat: StandardMaterial3D
+## Instant du dernier mouvement de souris recu, en millisecondes. -1 = jamais.
+var _mouse_moved_at := -1
 
 ## Etat expose au HUD.
 var target_id := Blocks.AIR
@@ -206,6 +214,7 @@ func _highlight_material() -> StandardMaterial3D:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		_mouse_moved_at = Time.get_ticks_msec()
 		_yaw -= event.relative.x * mouse_sensitive
 		# `_pitch` est en radians — c'est ce qu'attend `head.rotation.x`. Le
 		# borner en degres le laissait tourner de 5 000 degres : on pouvait
@@ -484,12 +493,21 @@ func _update_speed(delta: float) -> void:
 ## `is_action_pressed` ne rend qu'un booleen, et la camera tournerait alors par
 ## crans, d'un coup, comme un jeu d'arcade. Le stick demande une vitesse
 ## graduelle, et `get_axis` la donne.
+##
+## La souris et le stick se marchent dessus si les deux tournent : celui qui
+## n'a pas bouge depuis le dernier clichage cede la main. La souris gagne donc
+## pendant `STICK_YIELD_MS` apres chaque mouvement — mais **seulement** pendant
+## ce delai. Le test d'avant, « la souris est-elle capturee », neutralisait le
+## stick pendant toute la partie, puisque c'est precisement son etat normal :
+## la visee a la manette ne fonctionnait que le temps d'une pause.
+##
+## L'etat du curseur n'entre volontairement pas dans le test : `_mouse_moved_at`
+## n'est mis a jour que par une souris capturee, donc un curseur libre ne peut
+## pas laisser croire que la souris dirige le regard. En revanche, l'inclure
+## rendait cette fonction impossible a verifier hors du jeu, alors que c'est la
+## seule maniere d'y garder un oeil.
 func _update_look(delta: float) -> void:
-	if not can_move or Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
-		# La souris et le stick se marchent dessus si les deux tournent : celui
-		# qui n'a pas bouge depuis le dernier clichage cede la main. La souris
-		# gagne a chaque fois qu'on en voit un mouvement, parce que c'est elle
-		# qui donne le deplacement de tete fin.
+	if not can_move or _mouse_claims_look():
 		return
 	var turn := Input.get_axis("look_left", "look_right")
 	var tilt := Input.get_axis("look_up", "look_down")
@@ -498,6 +516,12 @@ func _update_look(delta: float) -> void:
 	_yaw -= turn * stick_look_speed * delta
 	var step := tilt * stick_look_speed * delta * (-1.0 if invert_y else 1.0)
 	_pitch = clampf(_pitch + step, -PI * 0.499, PI * 0.499)
+
+
+## La souris dirige-t-elle encore le regard ? Vrai pendant `STICK_YIELD_MS` apres
+## son dernier mouvement, et apres elle ne l'est plus.
+func _mouse_claims_look() -> bool:
+	return Time.get_ticks_msec() - _mouse_moved_at < STICK_YIELD_MS
 
 
 func _move(delta: float) -> void:
@@ -699,12 +723,22 @@ func _mine(pos: Vector3i, block_id: int) -> void:
 	world.set_block(pos, Blocks.AIR)
 
 
-## Clic droit sur un bloc special (table d'enchantement). Renvoie true si
-## l'ecran correspondant s'est ouvert.
+## Clic droit sur un bloc special (etabli, table d'enchantement). Renvoie true
+## si l'ecran correspondant s'est ouvert.
+##
+## Ce test se fait **avant** `_process_place`, et pour une raison precise : la
+## pose s'arretait sur un objet qui n'a pas de bloc a poser — la main vide, une
+## pioche, une pomme. L'etabli ne s'ouvrait donc que si la main tenait
+## justement un bloc, alors que dans Minecraft n'importe quoi l'ouvre. Comme la
+## pioche est fabricationnee avant l'etabli en general, on tombait sur le cas
+## le plus courant du jeu.
 func _interact(hit: Dictionary) -> bool:
 	if not hit["hit"]:
 		return false
 	var block_id: int = hit["block"]
+	if hit["normal"] != Vector3i.ZERO and block_id == Blocks.CRAFTING_TABLE:
+		Game.open_crafting_table(Vector3(hit["pos"]) + Vector3(0.5, 0.5, 0.5))
+		return true
 	if Blocks.interact_of(block_id) != "enchant":
 		return false
 	Game.open_enchanting(Vector3(hit["pos"]))
@@ -720,11 +754,6 @@ func _process_place(hit: Dictionary) -> void:
 		return
 	var block_id := Items.block_of(held)
 	if block_id < 0:
-		return
-
-	# Clic droit sur un etabli : on ouvre l'interface de fabrication.
-	if hit["block"] == Blocks.CRAFTING_TABLE and hit["normal"] != Vector3i.ZERO:
-		Game.open_crafting_table(Vector3(hit["pos"]) + Vector3(0.5, 0.5, 0.5))
 		return
 
 	var target: Vector3i = hit["pos"] + hit["normal"]

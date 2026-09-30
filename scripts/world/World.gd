@@ -24,6 +24,14 @@ const KEEP_MARGIN := 2
 const MESHES_PER_FRAME := 2
 const GENERATIONS_PER_FRAME := 8
 
+## Filet de securite du reelancement de `_schedule` (voir `_schedule`), en
+## millisecondes. Le drapeau suffit en temps normal ; ce delai garantit qu'un
+## evenement qu'on aurait oublie de signaler ne laisse pas le disque a moitie
+## charge. On mesure le temps ecoule plutot que d'additionner un delta : les
+## tests appellent `update` depuis leurs propres boucles, ou le delta du monde
+## n'est pas celui de leur image.
+const RESCHEDULE_BACKSTOP_MS := 500
+
 var seed_value := 0
 var render_distance := 5
 
@@ -36,6 +44,14 @@ var _gen: WorldGen
 var _center := Vector2i(1 << 30, 1 << 30)
 var _queued_gen: Dictionary = {}
 var _queued_mesh: Dictionary = {}
+## `_schedule` coute un balayage du disque et deux tris : le refaire a chaque
+## image, c'est payer la fouille du monde 60 fois par seconde pour trouver le
+## plus souvent rien de neuf. Le drapeau est pose par ce qui peut reellement
+## changer la situation — un resultat de tache applique, une edition, un
+## changement de portee — et `update` ne reveille le calendrier que sur ce
+## drapeau, le deplacement du joueur, ou le filet de securite.
+var _schedule_dirty := true
+var _last_schedule_at := 0
 
 ## Positions des blocs qui emettent de la lumiere (torches), pour TorchLights.
 var torches: Dictionary = {}
@@ -74,6 +90,7 @@ func set_render_distance(value: int) -> void:
 		return
 	render_distance = clamped
 	_center = Vector2i(1 << 30, 1 << 30)  # force la revision du centre
+	_schedule_dirty = true
 
 
 # ------------------------------------------------------------------ requetes
@@ -125,6 +142,7 @@ func set_block(pos: Vector3i, id: int) -> int:
 		torches[pos] = true
 
 	_mark_dirty(coords.x, coords.y)
+	_schedule_dirty = true
 	block_changed.emit(pos, old, id)
 	return old
 
@@ -139,6 +157,7 @@ func _mark_dirty(cx: int, cz: int) -> void:
 				# propres donnees n'ont pas change.
 				if dx != 0 or dz != 0:
 					chunk.dirty_border = true
+	_schedule_dirty = true
 
 
 ## Position d'apparition : premiere terre emergee autour de l'origine.
@@ -176,7 +195,14 @@ func update(player_pos: Vector3) -> void:
 	if center != _center:
 		_center = center
 		_unload_far(center)
-	_schedule()
+		_schedule_dirty = true
+	var now := Time.get_ticks_msec()
+	if now - _last_schedule_at >= RESCHEDULE_BACKSTOP_MS:
+		_schedule_dirty = true
+	if _schedule_dirty:
+		_schedule_dirty = false
+		_last_schedule_at = now
+		_schedule()
 
 
 ## Le disque de terrain autour du joueur est-il complet ?
@@ -215,6 +241,7 @@ func _collect() -> void:
 		chunk.mesh_dirty = true
 		# Ces voisins viennent d'obtenir une bordure qui leur manquait.
 		_mark_dirty(cx, cz)
+	_schedule_dirty = true
 
 	# Le maillage est le poste le plus cher : on l'etalit sur plusieurs images.
 	var budget := MESHES_PER_FRAME
@@ -283,6 +310,18 @@ func _unload_far(center: Vector2i) -> void:
 			_kept[key] = {
 				"blocks": chunk.blocks, "min_y": chunk.min_y, "max_y": chunk.max_y,
 			}
+	# Les sources des positions dechargees quittent la liste des torches.
+	# `TorchLights` la parcourt cinq fois par seconde, et une source oubliee
+	# n'est plus rien : son chunk n'existe plus, `get_block` y rend de l'air,
+	# et la lumiere qu'elle detenait se met a eclairer le vide. La liste
+	# grossissait aussi sans fin au fur et a mesure que le joueur explore.
+	var dropped: Array = []
+	for pos: Vector3i in torches:
+		var coords := Vox.chunk_of(pos)
+		if doomed.has(Vox.chunk_key(coords.x, coords.y)):
+			dropped.append(pos)
+	for pos in dropped:
+		torches.erase(pos)
 
 
 func _schedule() -> void:
