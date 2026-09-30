@@ -1,0 +1,108 @@
+# Les 736 verifications du projet ne tournaient jusqu'ici que sur la machine
+# de l'auteur, a la main. Ce workflow les lance a chaque push.
+#
+# Deux details insidersistent et ne sont pas des mobiles :
+#
+# - Le projet est verifie avec la meme version que celle annoncee dans le
+#   README et `project.godot`. La version est repetee dans `GODOT_VERSION`
+#   ci-dessous, et `README.md` la reprend : les trois doivent changer ensemble.
+#
+# - Les suites sont sensibles au temps qui passe. Sous charge CPU — deux
+#   tourneurs en parallele, ou un simple `godot` lance juste avant — l'UI peut
+#   rater le controle des fissures de minage, et le reseau depasser son delai.
+#   Un echec la est du bruit, pas une regression : chaque suite est donc
+#   reessayee, et seule l'echec repete fait tomber le build.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Verifications
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      GODOT_VERSION: 4.7.2-stable
+      # Three attempts, not one: see the note on timing above.
+      ATTEMPTS: 3
+
+    steps:
+      - name: Recuperer les sources
+        uses: actions/checkout@v4
+
+      - name: Recuperer Godot
+        run: |
+          set -euo pipefail
+          url="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          curl -fsSL "$url" -o godot.zip
+          unzip -q godot.zip
+          mv "Godot_v${GODOT_VERSION}_linux.x86_64" "$HOME/godot"
+          chmod +x "$HOME/godot"
+          "$HOME/godot" --version
+
+      # Le cache porte sur l'import des ressources, qui est long (textures,
+      # sons et icones sont tous generes au premier lancement).
+      - name: Cache de l'import
+        uses: actions/cache@v4
+        with:
+          path: .godot
+          key: godot-import-${{ hashFiles('project.godot') }}-${{ hashFiles('assets/**') }}
+          restore-keys: godot-import-${{ hashFiles('project.godot') }}-
+
+      - name: Importer le projet
+        run: "$HOME/godot --headless --import"
+
+      # La fonction renvoie le statut du dernier echec : une suite qui reussit
+      # a sa deuxieme tentative ne fait pas tomber le build, une qui echoue
+      # trois fois de suite si.
+      - name: Definir la fonction de reessai
+        run: |
+          cat >> "$GITHUB_PATH" <<'EOF'
+          run_suite() {
+            local label="$1"; shift
+            local attempt=1
+            while [ "$attempt" -le "$ATTEMPTS" ]; do
+              echo "::group::$label — tentative $attempt/$ATTEMPTS"
+              if "$@"; then
+                echo "::endgroup::"
+                echo "$label : OK (tentative $attempt)"
+                return 0
+              fi
+              echo "::endgroup::"
+              echo "$label : echec (tentative $attempt/$ATTEMPTS)"
+              attempt=$((attempt + 1))
+              sleep 5
+            done
+            echo "$label : echec sur $ATTEMPTS tentatives"
+            return 1
+          }
+          EOF
+
+      - name: SmokeTest — 575 verifications
+        run: run_suite SmokeTest "$HOME/godot" --headless --script res://tools/SmokeTest.gd
+
+      - name: Interface — 93 verifications
+        run: run_suite Interface "$HOME/godot" --headless --uitest --distance=3
+
+      - name: Reseau — 68 verifications
+        run: run_suite Reseau "$HOME/godot" --headless --script res://tools/NetTest.gd
+
+      # Le reste des scripts de `tools/` sert au developpement (dumps, capture
+      # de tuiles, eclairage) et n'a pas d'assertion : les lancer ici n'aurait
+      # rien verifie. Seules les trois suites ci-dessus ont un code de sortie
+      # qui compte.
+      - name: Contenu atteignable — 30 verifications
+        run: run_suite Contenu "$HOME/godot" --headless --script res://tools/CheckContent.gd
+
+      - name: Eclairage — 15 verifications
+        run: run_suite Eclairage "$HOME/godot" --headless --script res://tools/CheckLights.gd
