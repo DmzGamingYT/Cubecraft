@@ -106,6 +106,11 @@ var _fpshot := false
 var _loading_shot := false
 var _capturing := false
 var _ui_test := false
+## Code de sortie du processus apres `--uitest`. 0 = tout est passe, 1 = au
+## moins une verification a echoue. La partie est toujours quitte par
+## `Game.quit_game`, qui recoit ce code : appeler `get_tree().quit` ici
+## l'ecraserait quand meme, et le test dirait « succes » a la CI.
+var _ui_test_exit_code := 0
 var _pause_shot := false
 var _title_test := false
 var _debug_shot := false
@@ -868,8 +873,18 @@ func _save_seed() -> int:
 ## Une partie rapide « Jouer » part dans le premier emplacement libre, et non
 ## dans celui de la partie precedente : sans cela, relancer « Jouer » apres avoir
 ## repris un monde ecraserait ce monde, sans que rien ne l'ait annonce.
+##
+## Quand il ne reste aucune place, on refuse la partie plutot que de la laisser
+## ecraser le dernier monde a la premiere sauvegarde. Le titre ne declenche pas
+## ce chemin — son bouton ouvre « Mes mondes » — mais la garde reste ici : c'est
+## le seul endroit du code ou une ecriture peut detruire une sauvegarde, et il ne
+## doit pas dependre d'un bouton.
 func _on_title_play(seed_value: int, distance: int) -> void:
-	Game.save_slot = SaveSystem.first_free_slot()
+	var slot := SaveSystem.next_free_slot()
+	if slot <= 0:
+		push_warning("« Jouer » refuse : les emplacements de sauvegarde sont pleins.")
+		return
+	Game.save_slot = slot
 	Game.world_name = ""
 	await _leave_title()
 	_start_new_game(seed_value, distance, false)
@@ -1047,7 +1062,12 @@ func _on_title_slot_delete(slot: int) -> void:
 	SaveSystem.erase(slot)
 	if slot == Game.save_slot:
 		Game.world_name = ""
-		Game.save_slot = SaveSystem.first_free_slot()
+		# `first_free_slot` renverrait ici le dernier emplacement, qui est
+		# occupe : la sauvegarde suivante aurait efface un autre monde. Zero
+		# dit « nulle part », et `Game.save_game` s'y refuse — la partie
+		# continue, simplement sans etre enregistree tant qu'aucune place
+		# n'est liberee.
+		Game.save_slot = SaveSystem.next_free_slot()
 	if title != null and title.visible:
 		title.refresh_panels()
 
@@ -1313,7 +1333,7 @@ func _process(delta: float) -> void:
 	elif _ui_test and _ready_to_play:
 		_capturing = true
 		await _run_ui_test()
-		await Game.quit_game()
+		await Game.quit_game(_ui_test_exit_code)
 	elif _debug_run and _ready_to_play:
 		_capturing = true
 		_debug_run = false
@@ -1535,8 +1555,14 @@ func _run_ui_test() -> void:
 		_on_back_to_title, func() -> bool: return _ready_to_play)
 	await diag.run()
 	print("UI %s" % diag.checklist.report_line())
-	for name in diag.checklist.failed_names():
+	var failed := diag.checklist.failed_names()
+	for name in failed:
 		print("UI ECHEC : %s" % name)
+	# Le code de sortie ne porte le verdict que pour la ligne de commande.
+	# `--debugrun` appelle la meme sequence depuis le menu, et y quitter
+	# fermerait le jeu sous les yeux du joueur au lieu d'afficher le rapport.
+	if _ui_test:
+		_ui_test_exit_code = 1 if not failed.is_empty() else 0
 
 
 ## Lecture directe des donnees de sommet du chunk sous la camera : c'est le

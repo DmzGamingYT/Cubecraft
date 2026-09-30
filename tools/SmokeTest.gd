@@ -166,14 +166,19 @@ func _run_remesh_checks() -> void:
 	check(_world._kept.has(key), "le chunk modifie est conserve en memoire")
 
 
+## Le code de sortie porte le verdict : sans lui, le processus sort toujours en 0,
+## meme avec des verifications en echec, et une chaine qui n'observe que lui — la
+## CI, un editeur — lit un succes sur un echec. `quit(0)` ferme sur reussite.
 func _finish() -> bool:
 	print("----")
 	if failures.is_empty():
 		print("OK : %d verifications passees." % checks)
+		quit(0)
 		return true
 	for failure in failures:
 		print("ECHEC : %s" % failure)
 	print("ECHEC : %d/%d verifications en echec." % [failures.size(), checks])
+	quit(1)
 	return true
 
 

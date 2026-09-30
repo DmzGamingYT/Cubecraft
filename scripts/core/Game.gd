@@ -103,7 +103,11 @@ func start() -> void:
 ## relacher ses playbacks, puis quitte. Sans cette attente, fermer le jeu
 ## pendant l'averse fait signaler deux objets fuis (le flux de pluie et sa
 ## lecture) ; une voix de bruitage en train de jouer fuit de meme.
-func quit_game() -> void:
+## `exit_code` est reporte tel quel au processus. Il reste 0 partout sauf
+## pour `--uitest`, qui doit pouvoir dire a la CI que la sequence a echoue
+## sans quitter l'arbre de son cote — deux appels a `get_tree().quit`
+## s'ecraseraient, et le second Annulerait le verdict du premier.
+func quit_game(exit_code: int = 0) -> void:
 	if _quitting:
 		return
 	_quitting = true
@@ -113,7 +117,7 @@ func quit_game() -> void:
 	if is_inside_tree():
 		# Un cycle de melangeage suffit ; 0,35 s couvre les tampons audio.
 		await get_tree().create_timer(0.35).timeout
-	get_tree().quit()
+	get_tree().quit(exit_code)
 
 
 # ----------------------------------------------------------------- ecrans
@@ -291,6 +295,12 @@ func has_slot(slot: int) -> bool:
 
 func save_game() -> bool:
 	if world == null or player == null:
+		return false
+	# Zero n'est pas un emplacement : c'est ce que vaut `save_slot` quand le
+	# joueur a efface le monde qu'il jouait et que les six places sont prises.
+	# Ecrire quand meme produirait un `slot_0.json` que personne ne peut
+	# relire, et surtout effacerait la derniere partie encore sur le disque.
+	if save_slot <= 0:
 		return false
 	var chunks: Array = []
 	for key in world.chunks:
