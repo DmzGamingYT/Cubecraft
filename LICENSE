@@ -19,14 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Le dépôt principal ne contient aucune image : tout ce que le jeu affiche est
-généré par le code à l'exécution, et relève du MIT ci-dessus.
-
-Une branche à part, `kenney-assets`, ajoute un pack graphique **CC0** de Kenney
-Vleugels. Ces fichiers ne sont pas couverts par cette licence et sont libres de
-toute contrainte ; leur licence est dans `assets/kenney/LICENSE-kenney.txt` sur
-cette branche. C'est un ajout purement visuel et facultatif : le jeu
-fonctionne à l'identique sans lui.

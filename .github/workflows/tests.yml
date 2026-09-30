@@ -1,4 +1,4 @@
-# Les 736 verifications du projet ne tournaient jusqu'ici que sur la machine
+# Les 781 verifications du projet ne tournaient jusqu'ici que sur la machine
 # de l'auteur, a la main. Ce workflow les lance a chaque push.
 #
 # Deux details insidersistent et ne sont pas des mobiles :
@@ -8,10 +8,10 @@
 #   ci-dessous, et `README.md` la reprend : les trois doivent changer ensemble.
 #
 # - Les suites sont sensibles au temps qui passe. Sous charge CPU — deux
-#   tourneurs en parallele, ou un simple `godot` lance juste avant — l'UI peut
-#   rater le controle des fissures de minage, et le reseau depasser son delai.
-#   Un echec la est du bruit, pas une regression : chaque suite est donc
-#   reessayee, et seule l'echec repete fait tomber le build.
+#   tourneurs en parallèle, ou un simple `godot` lancé juste avant — l'UI peut
+#   rater le contrôle des fissures de minage, et le réseau dépasser son délai.
+#   Un échec là est du bruit, pas une régression : chaque suite passe par
+#   `.github/scripts/run-suite.sh`, qui réessaie trois fois.
 
 name: Tests
 
@@ -29,11 +29,10 @@ jobs:
   tests:
     name: Verifications
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     env:
       GODOT_VERSION: 4.7.2-stable
-      # Three attempts, not one: see the note on timing above.
       ATTEMPTS: 3
 
     steps:
@@ -56,53 +55,31 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .godot
-          key: godot-import-${{ hashFiles('project.godot') }}-${{ hashFiles('assets/**') }}
-          restore-keys: godot-import-${{ hashFiles('project.godot') }}-
+          key: godot-import-${{ hashFiles('project.godot') }}
+          restore-keys: godot-import-
 
       - name: Importer le projet
         run: "$HOME/godot --headless --import"
 
-      # La fonction renvoie le statut du dernier echec : une suite qui reussit
-      # a sa deuxieme tentative ne fait pas tomber le build, une qui echoue
-      # trois fois de suite si.
-      - name: Definir la fonction de reessai
-        run: |
-          cat >> "$GITHUB_PATH" <<'EOF'
-          run_suite() {
-            local label="$1"; shift
-            local attempt=1
-            while [ "$attempt" -le "$ATTEMPTS" ]; do
-              echo "::group::$label — tentative $attempt/$ATTEMPTS"
-              if "$@"; then
-                echo "::endgroup::"
-                echo "$label : OK (tentative $attempt)"
-                return 0
-              fi
-              echo "::endgroup::"
-              echo "$label : echec (tentative $attempt/$ATTEMPTS)"
-              attempt=$((attempt + 1))
-              sleep 5
-            done
-            echo "$label : echec sur $ATTEMPTS tentatives"
-            return 1
-          }
-          EOF
+      - name: Rendre le script de reessai executable
+        run: chmod +x .github/scripts/run-suite.sh
 
       - name: SmokeTest — 575 verifications
-        run: run_suite SmokeTest "$HOME/godot" --headless --script res://tools/SmokeTest.gd
+        run: .github/scripts/run-suite.sh SmokeTest "$HOME/godot" --headless --script res://tools/SmokeTest.gd
 
       - name: Interface — 93 verifications
-        run: run_suite Interface "$HOME/godot" --headless --uitest --distance=3
+        run: .github/scripts/run-suite.sh Interface "$HOME/godot" --headless --uitest --distance=3
 
       - name: Reseau — 68 verifications
-        run: run_suite Reseau "$HOME/godot" --headless --script res://tools/NetTest.gd
+        run: .github/scripts/run-suite.sh Reseau "$HOME/godot" --headless --script res://tools/NetTest.gd
 
-      # Le reste des scripts de `tools/` sert au developpement (dumps, capture
-      # de tuiles, eclairage) et n'a pas d'assertion : les lancer ici n'aurait
-      # rien verifie. Seules les trois suites ci-dessus ont un code de sortie
-      # qui compte.
       - name: Contenu atteignable — 30 verifications
-        run: run_suite Contenu "$HOME/godot" --headless --script res://tools/CheckContent.gd
+        run: .github/scripts/run-suite.sh Contenu "$HOME/godot" --headless --script res://tools/CheckContent.gd
 
       - name: Eclairage — 15 verifications
-        run: run_suite Eclairage "$HOME/godot" --headless --script res://tools/CheckLights.gd
+        run: .github/scripts/run-suite.sh Eclairage "$HOME/godot" --headless --script res://tools/CheckLights.gd
+
+      # Les autres scripts de `tools/` (dumps, capture de tuiles, eclairage,
+      # apercu des icones) servent au developpement et n'ont pas d'assertion :
+      # les lancer ici n'aurait rien verifie. Seules les cinq suites ci-dessus
+      # rendent un code de sortie qui compte.
